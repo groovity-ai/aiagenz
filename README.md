@@ -1,84 +1,107 @@
 # AiAgenz 🤖🚀
+
 **The All-in-One AI Agent Hosting Platform (PaaS).**
 
-Deploy, manage, and monetize autonomous AI agents with ease. Securely sandboxed with **gVisor**, powered by **OpenClaw**.
+Deploy, manage, and monetize autonomous AI agents with ease. Securely sandboxed with **gVisor**, powered by a production-grade **Go** backend.
 
 ---
 
 ## 🌟 Features
 
-*   **1-Click Deploy:** Launch pre-built agents (e.g., Trading Bot, CS Bot) in seconds.
-*   **Secure Sandboxing:** Every agent runs in an isolated Docker container protected by Google gVisor (`runsc`). No more neighbor noise or security breaches.
-*   **Web Console:** Access your agent's terminal directly from the browser (xterm.js + WebSocket).
-*   **Marketplace:** Rent high-quality agents built by community developers.
-*   **Multi-Tenant:** User isolation, resource limits, and secure API key management.
+- **1-Click Deploy** — Launch pre-built agents (Trading Bot, CS Bot, etc.) in seconds
+- **Secure Sandboxing** — Every agent runs in an isolated Docker container with gVisor (`runsc`)
+- **Web Console** — Interactive terminal via xterm.js + WebSocket
+- **Live Monitoring** — Real-time CPU & memory usage per container
+- **Dark Mode** — Full dark/light theme support
+- **Marketplace** — Browse and deploy community-built agents
+- **Admin Panel** — User management API (create, list, delete users)
+- **Pagination** — Scalable project listing with page controls
+- **Toast Notifications** — Rich feedback for all actions (Sonner)
+- **Skeleton Loading** — Polished loading states across all pages
 
 ---
 
 ## 🏗️ Tech Stack
 
-### **Frontend (`/frontend`)**
-*   **Framework:** Next.js 14 (App Router)
-*   **UI Library:** Shadcn UI + Tailwind CSS
-*   **Auth:** Custom JWT (Cookie-based session)
-*   **Icons:** Lucide React
+### Frontend (`/frontend`)
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router) |
+| UI | Shadcn UI + Tailwind CSS |
+| Auth | JWT (httpOnly Cookie) |
+| Theme | next-themes (dark/light) |
+| Notifications | Sonner |
+| Icons | Lucide React |
+| Console | xterm.js |
 
-### **Backend (`/backend`)**
-*   **Runtime:** Node.js (Express)
-*   **Database:** PostgreSQL (Prisma ORM)
-*   **Orchestration:** Dockerode (Docker API)
-*   **Realtime:** WebSocket (`ws`) for Console streaming
+### Backend (`/backend-go`)
+| Layer | Technology |
+|-------|-----------|
+| Language | Go 1.23 |
+| Router | chi v5 |
+| Database | PostgreSQL (pgx v5, raw SQL) |
+| Auth | JWT (golang-jwt) + bcrypt |
+| Encryption | AES-256-GCM (secrets at rest) |
+| Containers | Docker SDK (gVisor runtime) |
+| WebSocket | gorilla/websocket |
+| Middleware | Rate limiting, CORS, panic recovery, logging |
 
-### **Infrastructure**
-*   **Host:** Linux VPS (Ubuntu/Debian)
-*   **Container Engine:** Docker
-*   **Security Runtime:** gVisor (`runsc`)
-*   **Reverse Proxy:** Nginx / Traefik (Recommended for production)
+### Infrastructure
+- **Container Engine:** Docker with gVisor (`runsc`)
+- **Reverse Proxy:** Nginx / Traefik (production)
+- **Deployment:** Dockerfile included (multi-stage build)
 
 ---
 
 ## 📂 Project Structure
 
-```bash
+```
 aiagenz/
-├── frontend/           # Next.js Dashboard
-│   ├── app/            # App Router (Pages & API Proxy)
-│   ├── components/     # UI Components (Shadcn)
-│   └── middleware.ts   # Auth Protection
+├── backend-go/              # Go API Server
+│   ├── cmd/server/          # Entrypoint (main.go)
+│   ├── internal/
+│   │   ├── config/          # Environment configuration
+│   │   ├── domain/          # Models & request/response types
+│   │   ├── handler/         # HTTP handlers (auth, project, user, stats)
+│   │   ├── middleware/      # Auth, rate limit, admin, recovery, logger
+│   │   ├── repository/      # Database queries (pgx)
+│   │   ├── service/         # Business logic (auth, project, container)
+│   │   └── ws/              # WebSocket console handler
+│   ├── pkg/crypto/          # AES-GCM encryption
+│   ├── migrations/          # SQL migration files
+│   ├── Dockerfile           # Multi-stage production build
+│   └── API.md               # API reference documentation
 │
-├── backend/            # Express API Server
-│   ├── prisma/         # DB Schema & Migrations
-│   ├── server.js       # Main Entrypoint
-│   └── middleware/     # Auth Logic
+├── frontend/                # Next.js Dashboard
+│   ├── app/                 # Pages & API proxy routes
+│   ├── components/          # UI components (Shadcn + custom)
+│   └── middleware.ts        # Auth route protection
 │
-├── openclaw-starter/   # Docker Image: Basic OpenClaw Agent
-└── sahabatcuan/        # Docker Image: Trading Bot Monolith
+├── openclaw-starter/        # Docker Image: Basic OpenClaw Agent
+└── sahabatcuan/             # Docker Image: Trading Bot
 ```
 
 ---
 
-## 🚀 Getting Started (Local Development)
+## 🚀 Getting Started
 
 ### Prerequisites
-1.  **Docker** installed & running.
-2.  **gVisor (`runsc`)** installed & configured in Docker `daemon.json`.
-3.  **Node.js 18+** installed.
-4.  **PostgreSQL** running (or Dockerized Postgres).
+1. **Go 1.23+** installed
+2. **Node.js 18+** installed
+3. **PostgreSQL** running locally
+4. **Docker** installed & running
+5. **gVisor** (`runsc`) installed (for production sandboxing)
 
 ### 1. Setup Backend
 ```bash
-cd backend
-npm install
+cd backend-go
 
-# Setup Env
+# Configure environment
 cp .env.example .env
-# Edit DATABASE_URL & JWT_SECRET
+# Edit .env: set DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY (32 bytes)
 
-# Migration DB
-npx prisma db push
-
-# Start Server (Port 4001)
-node server.js
+# Run server (auto-migrates DB, seeds admin user)
+go run ./cmd/server
 ```
 
 ### 2. Setup Frontend
@@ -86,45 +109,69 @@ node server.js
 cd frontend
 npm install
 
-# Start Next.js (Port 3010)
-npm run dev -- -p 3010
+# Configure backend URL
+echo "BACKEND_URL=http://localhost:4001" > .env.local
+
+# Start dev server
+npm run dev
 ```
 
-### 3. Build Docker Images (Required for Deploy)
+### 3. Access Dashboard
+Open **http://localhost:3010**
+
+Default admin credentials:
+- **Email:** `admin@aiagenz.id`
+- **Password:** `admin123`
+
+> ⚠️ Change these in `.env` before deploying to production!
+
+### 4. Build Docker Images (for agent deployment)
 ```bash
-# Build Starter Image
-docker build -t openclaw-starter:latest ../openclaw-starter
-
-# Build Trading Bot Image
-docker build -t sahabatcuan:latest ../sahabatcuan
+docker build -t openclaw-starter:latest ./openclaw-starter
+docker build -t sahabatcuan:latest ./sahabatcuan
 ```
 
-### 4. Access Dashboard
-Open `http://localhost:3010` in your browser.
-Default Admin: `admin@aiagenz.id` / `admin123`
+### 5. Docker Deployment (Backend)
+```bash
+cd backend-go
+docker build -t aiagenz-backend .
+docker run -p 4001:4001 --env-file .env aiagenz-backend
+```
 
 ---
 
-## 🔌 API Reference (Backend)
+## 🔌 API Reference
 
 | Method | Endpoint | Description | Auth |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/login` | Login & Get Token | No |
-| `GET` | `/api/projects` | List all projects | Yes |
-| `POST` | `/api/projects` | Create/Deploy new agent | Yes |
-| `GET` | `/api/projects/:id` | Get project detail | Yes |
-| `POST` | `/api/projects/:id/:action` | Control (start/stop/restart) | Yes |
-| `DELETE` | `/api/projects/:id` | Destroy agent container | Yes |
-| `GET` | `/api/projects/:id/logs` | Fetch container logs | Yes |
-| `WS` | `/projects/:id/console` | Interactive Shell WebSocket | Yes |
+|--------|----------|-------------|------|
+| `POST` | `/api/auth/login` | Login & get JWT | No |
+| `POST` | `/api/auth/logout` | Logout | Yes |
+| `GET` | `/api/projects?page=1&limit=20` | List projects (paginated) | Yes |
+| `POST` | `/api/projects` | Deploy new agent | Yes |
+| `GET` | `/api/projects/{id}` | Get project detail | Yes |
+| `POST` | `/api/projects/{id}/control` | Start/stop/restart | Yes |
+| `DELETE` | `/api/projects/{id}` | Destroy agent | Yes |
+| `GET` | `/api/projects/{id}/logs` | Container logs | Yes |
+| `GET` | `/api/projects/{id}/stats` | CPU/memory usage | Yes |
+| `GET` | `/api/users` | List users | Admin |
+| `POST` | `/api/users` | Create user | Admin |
+| `DELETE` | `/api/users/{id}` | Delete user | Admin |
+| `WS` | `/projects/{id}/console?token=JWT` | Interactive shell | Yes |
+| `GET` | `/health` | Health check | No |
+
+Full documentation: [`backend-go/API.md`](backend-go/API.md)
 
 ---
 
-## 🛡️ Security Notes
+## 🛡️ Security
 
-*   **gVisor is Mandatory:** Do not run untrusted agent code without `runsc` runtime.
-*   **Secrets:** API Keys are encrypted/masked in API responses.
-*   **Isolation:** Frontend uses Next.js Proxy to hide Backend API from public internet.
+- **gVisor Sandboxing** — All agent containers run with `runsc` runtime
+- **AES-256-GCM** — API keys encrypted at rest
+- **bcrypt** — Password hashing (cost 10)
+- **Rate Limiting** — Per-IP with strict limits on auth endpoints
+- **JWT httpOnly Cookies** — XSS-safe token storage
+- **Admin Middleware** — User management restricted to admin role
+- **API Proxy** — Backend never exposed directly to the internet
 
 ---
 
