@@ -12,41 +12,41 @@ import { Switch } from "@/components/ui/switch"
 const plans = [
     {
         name: "Starter",
-        price: 5,
-        description: "Perfect for hobbyists and improved side projects.",
+        price: 9,
+        description: "Perfect for hobbyists and side projects.",
         features: [
-            "2 vCPU / 4GB RAM",
-            "20GB NVMe Storage",
+            "1 vCPU / 2GB RAM",
+            "10GB NVMe Storage",
+            "100GB Egress",
             "Community Support",
-            "Standard Network",
-            "1 Agent Limit"
+            "3 Agent Limit"
         ],
         missing: ["Priority Support", "Custom Domain", "SLA Guarantee"]
     },
     {
         name: "Pro",
-        price: 15,
+        price: 29,
         popular: true,
         description: "For professional developers building production agents.",
         features: [
-            "4 vCPU / 8GB RAM",
-            "40GB NVMe Storage",
+            "2 vCPU / 4GB RAM",
+            "50GB NVMe Storage",
+            "500GB Egress",
             "Priority Email Support",
-            "Fast Network",
-            "5 Agent Limit",
+            "10 Agent Limit",
             "Custom Domain"
         ],
         missing: ["SLA Guarantee"]
     },
     {
         name: "Business",
-        price: 40,
+        price: 79,
         description: "For teams and businesses scaling their AI workforce.",
         features: [
-            "8 vCPU / 16GB RAM",
+            "4 vCPU / 8GB RAM",
             "100GB NVMe Storage",
+            "1TB Egress",
             "24/7 Priority Support",
-            "Ultra-Fast Network",
             "Unlimited Agents",
             "Custom Domain",
             "99.9% SLA Guarantee"

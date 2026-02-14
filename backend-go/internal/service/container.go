@@ -61,6 +61,11 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	memoryReservation := memoryBytes / 2 // 50% soft guarantee
 	nanoCPUs := int64(resources.CPU * 1e9)
 
+	// Inject NODE_OPTIONS to prevent JS heap OOM.
+	// Set max-old-space-size to 75% of container memory, leaving headroom for OS overhead.
+	nodeHeapMB := resources.MemoryMB * 3 / 4
+	env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", nodeHeapMB))
+
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: image,

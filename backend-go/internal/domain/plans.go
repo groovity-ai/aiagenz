@@ -18,31 +18,31 @@ func AvailablePlans() []Plan {
 		{
 			ID:        "starter",
 			Name:      "Starter",
-			CPU:       0.5,
-			MemoryMB:  512,
-			StorageGB: 5,
-			EgressGB:  50,
-			PriceUSD:  500, // $5/mo
+			CPU:       1,
+			MemoryMB:  2048,
+			StorageGB: 10,
+			EgressGB:  100,
+			PriceUSD:  900, // $9/mo
 			Popular:   false,
 		},
 		{
 			ID:        "pro",
 			Name:      "Pro",
-			CPU:       1,
-			MemoryMB:  1024,
-			StorageGB: 20,
-			EgressGB:  200,
-			PriceUSD:  1500, // $15/mo
+			CPU:       2,
+			MemoryMB:  4096,
+			StorageGB: 50,
+			EgressGB:  500,
+			PriceUSD:  2900, // $29/mo
 			Popular:   true,
 		},
 		{
 			ID:        "business",
 			Name:      "Business",
-			CPU:       2,
-			MemoryMB:  2048,
-			StorageGB: 50,
-			EgressGB:  500,
-			PriceUSD:  4000, // $40/mo
+			CPU:       4,
+			MemoryMB:  8192,
+			StorageGB: 100,
+			EgressGB:  1000,
+			PriceUSD:  7900, // $79/mo
 			Popular:   false,
 		},
 	}
