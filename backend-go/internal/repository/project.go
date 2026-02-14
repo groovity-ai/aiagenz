@@ -22,8 +22,8 @@ func NewProjectRepository(db *pgxpool.Pool) *ProjectRepository {
 // Create inserts a new project into the database.
 func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error {
 	query := `
-		INSERT INTO projects (id, user_id, name, type, status, container_id, container_name, config, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO projects (id, user_id, name, type, plan, status, container_id, container_name, config, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 	var configStr *string
 	if p.Config != nil {
@@ -32,7 +32,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error
 	}
 
 	_, err := r.db.Exec(ctx, query,
-		p.ID, p.UserID, p.Name, p.Type, p.Status,
+		p.ID, p.UserID, p.Name, p.Type, p.Plan, p.Status,
 		p.ContainerID, p.ContainerName, configStr, p.CreatedAt,
 	)
 	if err != nil {
@@ -44,7 +44,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error
 // FindByID returns a project by ID and user ID (ownership check).
 func (r *ProjectRepository) FindByID(ctx context.Context, id, userID string) (*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
 		FROM projects WHERE id = $1 AND user_id = $2
 	`
 	return r.scanOne(ctx, query, id, userID)
@@ -53,7 +53,7 @@ func (r *ProjectRepository) FindByID(ctx context.Context, id, userID string) (*d
 // FindAllByUser returns all projects for a user, ordered by creation date.
 func (r *ProjectRepository) FindAllByUser(ctx context.Context, userID string) ([]*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
 		FROM projects WHERE user_id = $1 ORDER BY created_at DESC
 	`
 	rows, err := r.db.Query(ctx, query, userID)
@@ -100,7 +100,7 @@ func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 // FindByIDOnly returns a project by ID without user check (for WebSocket).
 func (r *ProjectRepository) FindByIDOnly(ctx context.Context, id string) (*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
 		FROM projects WHERE id = $1
 	`
 	return r.scanOne(ctx, query, id)
@@ -112,7 +112,7 @@ func (r *ProjectRepository) scanOne(ctx context.Context, query string, args ...i
 	var configStr *string
 
 	err := row.Scan(
-		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Status,
+		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Plan, &p.Status,
 		&p.ContainerID, &p.ContainerName, &configStr, &p.CreatedAt,
 	)
 	if err != nil {
@@ -133,7 +133,7 @@ func (r *ProjectRepository) scanRow(rows pgx.Rows) (*domain.Project, error) {
 	var configStr *string
 
 	err := rows.Scan(
-		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Status,
+		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Plan, &p.Status,
 		&p.ContainerID, &p.ContainerName, &configStr, &p.CreatedAt,
 	)
 	if err != nil {

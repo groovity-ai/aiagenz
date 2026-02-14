@@ -49,8 +49,18 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 	}, nil
 }
 
-// Create creates a new container with gVisor runtime and resource limits.
-func (s *ContainerService) Create(ctx context.Context, name, image string, env []string) (string, error) {
+// ContainerResources defines resource limits for a container.
+type ContainerResources struct {
+	MemoryMB int64   // Memory limit in MB
+	CPU      float64 // CPU count (e.g. 0.5, 1, 2)
+}
+
+// Create creates a new container with gVisor runtime and plan-based resource limits.
+func (s *ContainerService) Create(ctx context.Context, name, image string, env []string, resources ContainerResources) (string, error) {
+	memoryBytes := resources.MemoryMB * 1024 * 1024
+	memoryReservation := memoryBytes / 2 // 50% soft guarantee
+	nanoCPUs := int64(resources.CPU * 1e9)
+
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: image,
@@ -59,8 +69,9 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 		&container.HostConfig{
 			Runtime: "runsc",
 			Resources: container.Resources{
-				Memory:   512 * 1024 * 1024, // 512MB
-				NanoCPUs: 500000000,         // 0.5 CPU
+				Memory:            memoryBytes,
+				MemoryReservation: memoryReservation,
+				NanoCPUs:          nanoCPUs,
 			},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		},

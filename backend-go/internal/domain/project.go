@@ -12,6 +12,7 @@ type Project struct {
 	UserID        string    `json:"userId"`
 	Name          string    `json:"name"`
 	Type          string    `json:"type"`
+	Plan          string    `json:"plan"`
 	Status        string    `json:"status"`
 	ContainerID   *string   `json:"containerId,omitempty"`
 	ContainerName *string   `json:"containerName,omitempty"`
@@ -37,6 +38,7 @@ type ProjectResponse struct {
 	UserID        string             `json:"userId"`
 	Name          string             `json:"name"`
 	Type          string             `json:"type"`
+	Plan          string             `json:"plan"`
 	Status        string             `json:"status"`
 	ContainerID   *string            `json:"containerId,omitempty"`
 	ContainerName *string            `json:"containerName,omitempty"`
@@ -48,6 +50,7 @@ type ProjectResponse struct {
 type CreateProjectRequest struct {
 	Name          string `json:"name" validate:"required,min=1,max=100"`
 	Type          string `json:"type" validate:"required,oneof=starter custom marketplace"`
+	Plan          string `json:"plan" validate:"required,oneof=starter pro business"`
 	TelegramToken string `json:"telegramToken" validate:"required"`
 	APIKey        string `json:"apiKey"`
 }

@@ -74,7 +74,8 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		UserID:        userID,
 		Name:          req.Name,
 		Type:          req.Type,
-		Status:        "creating",
+		Plan:          req.Plan,
+		Status:        "provisioning",
 		ContainerName: &containerName,
 		Config:        []byte(encryptedConfig),
 		CreatedAt:     time.Now(),
@@ -85,8 +86,13 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		return nil, domain.ErrInternal("failed to save project", err)
 	}
 
-	// Create and start Docker container
-	containerID, err := s.container.Create(ctx, containerName, image, env)
+	// Create and start Docker container with plan-based resources
+	plan := domain.GetPlan(req.Plan)
+	resources := ContainerResources{
+		MemoryMB: plan.MemoryMB,
+		CPU:      plan.CPU,
+	}
+	containerID, err := s.container.Create(ctx, containerName, image, env, resources)
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", nil)
 		return nil, domain.ErrInternal("failed to create container", err)
@@ -126,6 +132,7 @@ func (s *ProjectService) List(ctx context.Context, userID string) ([]*domain.Pro
 			UserID:        p.UserID,
 			Name:          p.Name,
 			Type:          p.Type,
+			Plan:          p.Plan,
 			Status:        status,
 			ContainerID:   p.ContainerID,
 			ContainerName: p.ContainerName,
@@ -159,6 +166,7 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 		UserID:        project.UserID,
 		Name:          project.Name,
 		Type:          project.Type,
+		Plan:          project.Plan,
 		Status:        status,
 		ContainerID:   project.ContainerID,
 		ContainerName: project.ContainerName,

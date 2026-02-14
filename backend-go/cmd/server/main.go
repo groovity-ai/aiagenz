@@ -79,6 +79,7 @@ func main() {
 	healthHandler := handler.NewHealthHandler(db, containerSvc)
 	userHandler := handler.NewUserHandler(authSvc)
 	statsHandler := handler.NewStatsHandler(containerSvc)
+	plansHandler := handler.NewPlansHandler()
 	consoleHandler := ws.NewConsoleHandler(projectRepo, containerSvc, authSvc)
 
 	// Build router
@@ -100,8 +101,9 @@ func main() {
 	globalRL := middleware.NewRateLimiter(20, 40)
 	r.Use(globalRL.Middleware())
 
-	// Health check (no auth)
+	// Health check and public routes (no auth)
 	r.Get("/health", healthHandler.Check)
+	r.Get("/api/plans", plansHandler.List)
 
 	// Auth routes (no auth middleware, but strict rate limit)
 	r.Group(func(r chi.Router) {

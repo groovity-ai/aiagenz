@@ -47,6 +47,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			user_id        TEXT NOT NULL,
 			name           TEXT NOT NULL,
 			type           TEXT NOT NULL,
+			plan           TEXT NOT NULL DEFAULT 'starter',
 			status         TEXT NOT NULL DEFAULT 'stopped',
 			container_id   TEXT,
 			container_name TEXT,
@@ -54,6 +55,9 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+
+		-- Add plan column if it doesn't exist (migration for existing dbs)
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'starter';
 	`
 	_, err := pool.Exec(ctx, query)
 	if err != nil {
