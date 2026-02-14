@@ -132,3 +132,83 @@ func getClaimString(claims jwt.MapClaims, key string) string {
 	}
 	return ""
 }
+
+// ListUsers returns all users (admin only).
+func (s *AuthService) ListUsers(ctx context.Context) ([]*domain.UserResponse, error) {
+	users, err := s.userRepo.ListAll(ctx)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to list users", err)
+	}
+
+	responses := make([]*domain.UserResponse, len(users))
+	for i, u := range users {
+		responses[i] = &domain.UserResponse{
+			ID:        u.ID,
+			Email:     u.Email,
+			Role:      u.Role,
+			CreatedAt: u.CreatedAt,
+		}
+	}
+	return responses, nil
+}
+
+// CreateUser creates a new user with bcrypt password (admin only).
+func (s *AuthService) CreateUser(ctx context.Context, req *domain.CreateUserRequest) (*domain.UserResponse, error) {
+	exists, err := s.userRepo.Exists(ctx, req.Email)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to check user", err)
+	}
+	if exists {
+		return nil, domain.ErrBadRequest("email already registered")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to hash password", err)
+	}
+
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
+
+	now := time.Now()
+	user := &domain.User{
+		ID:        domain.NewUserID(),
+		Email:     req.Email,
+		Password:  string(hashedPassword),
+		Role:      role,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, domain.ErrInternal("failed to create user", err)
+	}
+
+	return &domain.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt,
+	}, nil
+}
+
+// DeleteUser removes a user by ID (admin only).
+func (s *AuthService) DeleteUser(ctx context.Context, id string) error {
+	user, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return domain.ErrInternal("failed to find user", err)
+	}
+	if user == nil {
+		return domain.ErrNotFound("user not found")
+	}
+	if user.Role == "admin" {
+		return domain.ErrBadRequest("cannot delete admin user")
+	}
+
+	if err := s.userRepo.Delete(ctx, id); err != nil {
+		return domain.ErrInternal("failed to delete user", err)
+	}
+	return nil
+}

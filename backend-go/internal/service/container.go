@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -133,6 +134,79 @@ func (s *ContainerService) ExecAttach(ctx context.Context, execID string) (*type
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
 	return &resp, nil
+}
+
+// Stats returns CPU and memory usage for a container.
+func (s *ContainerService) Stats(ctx context.Context, containerID string) (map[string]interface{}, error) {
+	resp, err := s.cli.ContainerStats(ctx, containerID, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var statsJSON map[string]interface{}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read stats: %w", err)
+	}
+
+	if err := json.Unmarshal(data, &statsJSON); err != nil {
+		return nil, fmt.Errorf("failed to parse stats: %w", err)
+	}
+
+	// Extract useful metrics
+	result := map[string]interface{}{
+		"cpu_stats":    statsJSON["cpu_stats"],
+		"memory_stats": statsJSON["memory_stats"],
+		"read":         statsJSON["read"],
+	}
+
+	// Calculate CPU percentage
+	if cpuStats, ok := statsJSON["cpu_stats"].(map[string]interface{}); ok {
+		if preCPU, ok := statsJSON["precpu_stats"].(map[string]interface{}); ok {
+			cpuUsage := getNestedFloat(cpuStats, "cpu_usage", "total_usage")
+			preCPUUsage := getNestedFloat(preCPU, "cpu_usage", "total_usage")
+			systemUsage := getNestedFloat(cpuStats, "system_cpu_usage")
+			preSystemUsage := getNestedFloat(preCPU, "system_cpu_usage")
+
+			cpuDelta := cpuUsage - preCPUUsage
+			systemDelta := systemUsage - preSystemUsage
+			if systemDelta > 0 {
+				result["cpu_percent"] = (cpuDelta / systemDelta) * 100.0
+			}
+		}
+	}
+
+	// Calculate memory percentage
+	if memStats, ok := statsJSON["memory_stats"].(map[string]interface{}); ok {
+		usage, _ := memStats["usage"].(float64)
+		limit, _ := memStats["limit"].(float64)
+		if limit > 0 {
+			result["memory_usage_mb"] = usage / 1024 / 1024
+			result["memory_limit_mb"] = limit / 1024 / 1024
+			result["memory_percent"] = (usage / limit) * 100.0
+		}
+	}
+
+	return result, nil
+}
+
+func getNestedFloat(m map[string]interface{}, keys ...string) float64 {
+	current := m
+	for i, key := range keys {
+		if i == len(keys)-1 {
+			if v, ok := current[key].(float64); ok {
+				return v
+			}
+			return 0
+		}
+		if nested, ok := current[key].(map[string]interface{}); ok {
+			current = nested
+		} else {
+			return 0
+		}
+	}
+	return 0
 }
 
 // Ping checks if Docker daemon is reachable.

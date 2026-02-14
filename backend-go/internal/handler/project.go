@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/aiagenz/backend/internal/domain"
 	"github.com/aiagenz/backend/internal/service"
@@ -41,6 +42,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /api/projects.
+// Supports ?page=1&limit=10 query params for pagination.
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
 
@@ -50,7 +52,38 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	JSON(w, http.StatusOK, projects)
+	// Pagination
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	total := len(projects)
+	start := (page - 1) * limit
+	end := start + limit
+
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	paginated := projects[start:end]
+	totalPages := (total + limit - 1) / limit
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"data":       paginated,
+		"page":       page,
+		"limit":      limit,
+		"total":      total,
+		"totalPages": totalPages,
+	})
 }
 
 // GetByID handles GET /api/projects/{id}.

@@ -82,3 +82,32 @@ func (r *UserRepository) Exists(ctx context.Context, email string) (bool, error)
 	}
 	return exists, nil
 }
+
+// ListAll returns all users ordered by creation date.
+func (r *UserRepository) ListAll(ctx context.Context) ([]*domain.User, error) {
+	query := `SELECT id, email, password, role, created_at, updated_at FROM users ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Password, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, &u)
+	}
+	return users, nil
+}
+
+// Delete removes a user by ID.
+func (r *UserRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	return nil
+}

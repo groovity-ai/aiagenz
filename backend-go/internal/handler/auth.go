@@ -7,7 +7,7 @@ import (
 	"github.com/aiagenz/backend/internal/service"
 )
 
-// AuthHandler handles authentication HTTP endpoints.
+// AuthHandler handles authentication endpoints.
 type AuthHandler struct {
 	auth *service.AuthService
 }
@@ -32,4 +32,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, resp)
+}
+
+// Logout handles POST /api/auth/logout.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }

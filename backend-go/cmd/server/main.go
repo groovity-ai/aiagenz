@@ -77,6 +77,8 @@ func main() {
 	authHandler := handler.NewAuthHandler(authSvc)
 	projectHandler := handler.NewProjectHandler(projectSvc)
 	healthHandler := handler.NewHealthHandler(db, containerSvc)
+	userHandler := handler.NewUserHandler(authSvc)
+	statsHandler := handler.NewStatsHandler(containerSvc)
 	consoleHandler := ws.NewConsoleHandler(projectRepo, containerSvc, authSvc)
 
 	// Build router
@@ -111,12 +113,25 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(authSvc))
 
+		// Auth
+		r.Post("/api/auth/logout", authHandler.Logout)
+
+		// Projects
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
 		r.Get("/api/projects/{id}", projectHandler.GetByID)
 		r.Post("/api/projects/{id}/control", projectHandler.Control)
 		r.Delete("/api/projects/{id}", projectHandler.Delete)
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)
+		r.Get("/api/projects/{id}/stats", statsHandler.ContainerStats)
+
+		// Admin-only: User management
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AdminOnly)
+			r.Get("/api/users", userHandler.List)
+			r.Post("/api/users", userHandler.Create)
+			r.Delete("/api/users/{id}", userHandler.Delete)
+		})
 	})
 
 	// WebSocket console (auth via query param)
