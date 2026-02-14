@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/aiagenz/backend/internal/contextkeys"
 	"github.com/aiagenz/backend/internal/domain"
 	"github.com/aiagenz/backend/internal/service"
 )
@@ -37,4 +38,21 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // Logout handles POST /api/auth/logout.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// Me handles GET /api/auth/me — returns the currently authenticated user's profile.
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(contextkeys.UserID).(string)
+	if !ok || userID == "" {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	user, err := h.auth.GetUserByID(r.Context(), userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, user)
 }

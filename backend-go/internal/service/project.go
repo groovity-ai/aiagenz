@@ -228,6 +228,23 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 	return nil
 }
 
+// UpdateRepo updates the GitHub repository details for a project.
+func (s *ProjectService) UpdateRepo(ctx context.Context, id, userID, repoURL, webhookSecret string) error {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil {
+		return domain.ErrInternal("failed to get project", err)
+	}
+	if project == nil {
+		return domain.ErrNotFound("project not found")
+	}
+
+	if err := s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret); err != nil {
+		return domain.ErrInternal("failed to update repo", err)
+	}
+
+	return nil
+}
+
 // Delete destroys a project and its container.
 func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 	project, err := s.repo.FindByID(ctx, id, userID)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/aiagenz/backend/internal/contextkeys"
 	"github.com/aiagenz/backend/internal/handler"
 	"github.com/aiagenz/backend/internal/service"
 )
@@ -31,10 +32,10 @@ func Auth(authSvc *service.AuthService) func(next http.Handler) http.Handler {
 				return
 			}
 
-			// Store user info in context
-			ctx := context.WithValue(r.Context(), "userID", claims.Sub)
-			ctx = context.WithValue(ctx, "userEmail", claims.Email)
-			ctx = context.WithValue(ctx, "userRole", claims.Role)
+			// Store user info in context using typed keys
+			ctx := context.WithValue(r.Context(), contextkeys.UserID, claims.Sub)
+			ctx = context.WithValue(ctx, contextkeys.UserEmail, claims.Email)
+			ctx = context.WithValue(ctx, contextkeys.UserRole, claims.Role)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

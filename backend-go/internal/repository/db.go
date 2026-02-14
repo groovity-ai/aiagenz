@@ -63,5 +63,57 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
+	// Add GitHub fields
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo_url TEXT;
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+	`); err != nil {
+		return fmt.Errorf("failed to run github migrations: %w", err)
+	}
+
+	// Add Subscriptions table
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS subscriptions (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			plan TEXT NOT NULL,
+			status TEXT NOT NULL,
+			current_period_start TIMESTAMPTZ,
+			current_period_end TIMESTAMPTZ,
+			payment_provider_id TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
+	`); err != nil {
+		return fmt.Errorf("failed to run subscription migrations: %w", err)
+	}
+
+	// Add updated_at trigger for subscriptions
+	if _, err := pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION update_updated_at()
+		RETURNS TRIGGER AS $$
+		BEGIN
+			NEW.updated_at = NOW();
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_trigger WHERE tgname = 'trg_subscriptions_updated_at'
+			) THEN
+				CREATE TRIGGER trg_subscriptions_updated_at
+					BEFORE UPDATE ON subscriptions
+					FOR EACH ROW
+					EXECUTE FUNCTION update_updated_at();
+			END IF;
+		END;
+		$$;
+	`); err != nil {
+		return fmt.Errorf("failed to create updated_at trigger: %w", err)
+	}
+
 	return nil
 }

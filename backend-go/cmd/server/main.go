@@ -12,11 +12,12 @@ import (
 
 	"github.com/aiagenz/backend/internal/config"
 	"github.com/aiagenz/backend/internal/handler"
-	"github.com/aiagenz/backend/internal/middleware"
+	appMiddleware "github.com/aiagenz/backend/internal/middleware"
 	"github.com/aiagenz/backend/internal/repository"
 	"github.com/aiagenz/backend/internal/service"
 	"github.com/aiagenz/backend/internal/ws"
 	"github.com/aiagenz/backend/pkg/crypto"
+	"github.com/aiagenz/backend/pkg/payment"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 )
@@ -63,7 +64,8 @@ func main() {
 		log.Println("✅ Docker connected")
 	}
 
-	authSvc := service.NewAuthService(cfg.JWTSecret, cfg.AdminEmail, cfg.AdminPassword, repository.NewUserRepository(db))
+	userRepo := repository.NewUserRepository(db)
+	authSvc := service.NewAuthService(cfg.JWTSecret, cfg.AdminEmail, cfg.AdminPassword, userRepo)
 
 	// Seed admin user on first startup
 	if err := authSvc.SeedAdmin(ctx); err != nil {
@@ -73,24 +75,38 @@ func main() {
 	projectRepo := repository.NewProjectRepository(db)
 	projectSvc := service.NewProjectService(projectRepo, containerSvc, enc)
 
+	// Payment / Subscription
+	mockPayment := payment.NewMockGateway()
+	subRepo := repository.NewSubscriptionRepository(db)
+	subSvc := service.NewSubscriptionService(subRepo, userRepo, mockPayment)
+
+	// Start Monitoring Service
+	if containerSvc != nil {
+		monitorService := service.NewMonitorService(db, containerSvc)
+		monitorService.Start(ctx)
+	}
+
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authSvc)
 	projectHandler := handler.NewProjectHandler(projectSvc)
 	healthHandler := handler.NewHealthHandler(db, containerSvc)
 	userHandler := handler.NewUserHandler(authSvc)
-	statsHandler := handler.NewStatsHandler(containerSvc)
+	statsHandler := handler.NewStatsHandler(db, containerSvc)
+	webhookHandler := handler.NewWebhookHandler(projectRepo, containerSvc)
 	plansHandler := handler.NewPlansHandler()
+	paymentHandler := handler.NewPaymentHandler(subSvc)
+	adminHandler := handler.NewAdminHandler(db, authSvc)
 	consoleHandler := ws.NewConsoleHandler(projectRepo, containerSvc, authSvc)
 
 	// Build router
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(middleware.Recovery)
-	r.Use(middleware.Logger)
+	r.Use(appMiddleware.Recovery)
+	r.Use(appMiddleware.Logger)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
@@ -98,25 +114,28 @@ func main() {
 	}))
 
 	// Global rate limiter (20 req/sec per IP, burst of 40)
-	globalRL := middleware.NewRateLimiter(20, 40)
+	globalRL := appMiddleware.NewRateLimiter(20, 40)
 	r.Use(globalRL.Middleware())
 
 	// Health check and public routes (no auth)
 	r.Get("/health", healthHandler.Check)
 	r.Get("/api/plans", plansHandler.List)
+	r.Post("/api/webhooks/github", webhookHandler.HandleGitHub)
+	r.Post("/api/payment/webhook", paymentHandler.Webhook) // Public webhook
 
-	// Auth routes (no auth middleware, but strict rate limit)
+	// Auth routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.StrictRateLimiter())
+		r.Use(appMiddleware.StrictRateLimiter())
 		r.Post("/api/auth/login", authHandler.Login)
 	})
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(authSvc))
+		r.Use(appMiddleware.Auth(authSvc))
 
 		// Auth
 		r.Post("/api/auth/logout", authHandler.Logout)
+		r.Get("/api/auth/me", authHandler.Me)
 
 		// Projects
 		r.Get("/api/projects", projectHandler.List)
@@ -126,13 +145,22 @@ func main() {
 		r.Delete("/api/projects/{id}", projectHandler.Delete)
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)
 		r.Get("/api/projects/{id}/stats", statsHandler.ContainerStats)
+		r.Get("/api/projects/{id}/metrics", statsHandler.GetProjectMetrics)
+		r.Patch("/api/projects/{id}/repo", projectHandler.UpdateRepo)
 
-		// Admin-only: User management
+		// Payment routes
+		r.Post("/api/payment/checkout", paymentHandler.CreateCheckout)
+		r.Get("/api/payment/subscription", paymentHandler.GetSubscription)
+
+		// Admin routes
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.AdminOnly)
+			r.Use(appMiddleware.AdminOnly)
+			r.Get("/api/admin/stats", adminHandler.GetStats)
+			r.Get("/api/admin/users", adminHandler.ListUsers)
 			r.Get("/api/users", userHandler.List)
 			r.Post("/api/users", userHandler.Create)
 			r.Delete("/api/users/{id}", userHandler.Delete)
+			r.Post("/api/payment/simulate", paymentHandler.Simulate) // Admin-only: dev payment simulation
 		})
 	})
 

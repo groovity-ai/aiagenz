@@ -22,8 +22,8 @@ func NewProjectRepository(db *pgxpool.Pool) *ProjectRepository {
 // Create inserts a new project into the database.
 func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error {
 	query := `
-		INSERT INTO projects (id, user_id, name, type, plan, status, container_id, container_name, config, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO projects (id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 	var configStr *string
 	if p.Config != nil {
@@ -33,7 +33,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error
 
 	_, err := r.db.Exec(ctx, query,
 		p.ID, p.UserID, p.Name, p.Type, p.Plan, p.Status,
-		p.ContainerID, p.ContainerName, configStr, p.CreatedAt,
+		p.ContainerID, p.ContainerName, p.RepoURL, p.WebhookSecret, configStr, p.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create project: %w", err)
@@ -44,7 +44,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) error
 // FindByID returns a project by ID and user ID (ownership check).
 func (r *ProjectRepository) FindByID(ctx context.Context, id, userID string) (*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at
 		FROM projects WHERE id = $1 AND user_id = $2
 	`
 	return r.scanOne(ctx, query, id, userID)
@@ -53,7 +53,7 @@ func (r *ProjectRepository) FindByID(ctx context.Context, id, userID string) (*d
 // FindAllByUser returns all projects for a user, ordered by creation date.
 func (r *ProjectRepository) FindAllByUser(ctx context.Context, userID string) ([]*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at
 		FROM projects WHERE user_id = $1 ORDER BY created_at DESC
 	`
 	rows, err := r.db.Query(ctx, query, userID)
@@ -87,6 +87,16 @@ func (r *ProjectRepository) UpdateStatus(ctx context.Context, id, status string,
 	return nil
 }
 
+// UpdateRepo updates the GitHub repository details for a project.
+func (r *ProjectRepository) UpdateRepo(ctx context.Context, id, repoURL, webhookSecret string) error {
+	query := `UPDATE projects SET repo_url = $1, webhook_secret = $2 WHERE id = $3`
+	_, err := r.db.Exec(ctx, query, repoURL, webhookSecret, id)
+	if err != nil {
+		return fmt.Errorf("failed to update project repo: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a project from the database.
 func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM projects WHERE id = $1`
@@ -97,13 +107,22 @@ func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// FindByIDOnly returns a project by ID without user check (for WebSocket).
+// FindByIDOnly returns a project by ID without user check (for WebSocket/Webhook).
 func (r *ProjectRepository) FindByIDOnly(ctx context.Context, id string) (*domain.Project, error) {
 	query := `
-		SELECT id, user_id, name, type, plan, status, container_id, container_name, config, created_at
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at
 		FROM projects WHERE id = $1
 	`
 	return r.scanOne(ctx, query, id)
+}
+
+// FindByWebhookSecret returns a project matching the webhook secret.
+func (r *ProjectRepository) FindByWebhookSecret(ctx context.Context, secret string) (*domain.Project, error) {
+	query := `
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at
+		FROM projects WHERE webhook_secret = $1 LIMIT 1
+	`
+	return r.scanOne(ctx, query, secret)
 }
 
 func (r *ProjectRepository) scanOne(ctx context.Context, query string, args ...interface{}) (*domain.Project, error) {
@@ -113,7 +132,7 @@ func (r *ProjectRepository) scanOne(ctx context.Context, query string, args ...i
 
 	err := row.Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Plan, &p.Status,
-		&p.ContainerID, &p.ContainerName, &configStr, &p.CreatedAt,
+		&p.ContainerID, &p.ContainerName, &p.RepoURL, &p.WebhookSecret, &configStr, &p.CreatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -134,7 +153,7 @@ func (r *ProjectRepository) scanRow(rows pgx.Rows) (*domain.Project, error) {
 
 	err := rows.Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Type, &p.Plan, &p.Status,
-		&p.ContainerID, &p.ContainerName, &configStr, &p.CreatedAt,
+		&p.ContainerID, &p.ContainerName, &p.RepoURL, &p.WebhookSecret, &configStr, &p.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan project row: %w", err)

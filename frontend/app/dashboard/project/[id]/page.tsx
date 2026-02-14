@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeft, Play, Square, RotateCw, Trash2, Cpu, MemoryStick } from "lucide-react"
 import { toast } from "sonner"
 import Console from "@/components/Console"
+import { MetricsChart } from "@/components/MetricsChart"
 
 export default function ProjectDetail({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
@@ -18,14 +19,18 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
     const [project, setProject] = useState<any>(null)
     const [logs, setLogs] = useState<string>("")
     const [stats, setStats] = useState<any>(null)
+    const [metrics, setMetrics] = useState<any[]>([])
     const [loading, setLoading] = useState(false)
 
     useEffect(() => {
         fetchProject()
         fetchLogs()
+        fetchMetrics()
+
         const interval = setInterval(() => {
             fetchProject()
             fetchLogs()
+            fetchMetrics()
         }, 5000)
         return () => clearInterval(interval)
     }, [])
@@ -60,6 +65,16 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
             if (res.ok) {
                 const data = await res.json()
                 setStats(data)
+            }
+        } catch (e) { }
+    }
+
+    const fetchMetrics = async () => {
+        try {
+            const res = await fetch(`/api/projects/${id}/metrics?range=1h`)
+            if (res.ok) {
+                const data = await res.json()
+                setMetrics(data)
             }
         } catch (e) { }
     }
@@ -216,7 +231,9 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                         <div className="flex items-center">
                             <TabsList>
                                 <TabsTrigger value="logs">Live Logs</TabsTrigger>
+                                <TabsTrigger value="metrics">Metrics</TabsTrigger>
                                 <TabsTrigger value="console">Console</TabsTrigger>
+                                <TabsTrigger value="settings">Settings</TabsTrigger>
                             </TabsList>
                         </div>
                         <TabsContent value="logs">
@@ -225,8 +242,73 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                             </Card>
                         </TabsContent>
 
-                        <TabsContent value="console">
+                        <TabsContent value="metrics">
+                            <MetricsChart data={metrics} loading={!metrics} />
+                        </TabsContent>
+
+                        <TabsContent value="console" className="mt-4">
                             <Console projectId={id} />
+                        </TabsContent>
+
+                        <TabsContent value="settings" className="mt-4">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle>GitHub Integration</CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <div className="grid gap-2">
+                                        <label className="text-sm font-medium">Repository URL</label>
+                                        <input
+                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                            placeholder="https://github.com/username/repo"
+                                            defaultValue={project.repoUrl}
+                                            onChange={(e) => setProject({ ...project, repoUrl: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <label className="text-sm font-medium">Webhook Secret</label>
+                                        <input
+                                            type="password"
+                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                            placeholder="Secret (optional)"
+                                            defaultValue={project.webhookSecret}
+                                            onChange={(e) => setProject({ ...project, webhookSecret: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <label className="text-sm font-medium">Webhook URL</label>
+                                        <div className="flex items-center gap-2">
+                                            <code className="bg-muted p-2 rounded text-xs flex-1">
+                                                {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/github?projectId=${project.id}` : '...'}
+                                            </code>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">
+                                            Add this URL to your GitHub repository webhooks (Events: Push).
+                                        </p>
+                                    </div>
+                                    <Button onClick={async () => {
+                                        setLoading(true)
+                                        try {
+                                            const res = await fetch(`/api/projects/${id}/repo`, {
+                                                method: 'PATCH',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    repoUrl: project.repoUrl,
+                                                    webhookSecret: project.webhookSecret
+                                                })
+                                            })
+                                            if (res.ok) toast.success("Settings saved")
+                                            else toast.error("Failed to save settings")
+                                        } catch (e) {
+                                            toast.error("Error saving settings")
+                                        } finally {
+                                            setLoading(false)
+                                        }
+                                    }} disabled={loading}>
+                                        Save Changes
+                                    </Button>
+                                </CardContent>
+                            </Card>
                         </TabsContent>
                     </Tabs>
                 </div>

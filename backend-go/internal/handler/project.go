@@ -147,3 +147,25 @@ func (h *ProjectHandler) Logs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(logs))
 }
+
+// UpdateRepo handles PATCH /api/projects/{id}/repo.
+func (h *ProjectHandler) UpdateRepo(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userID").(string)
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		RepoURL       string `json:"repoUrl"`
+		WebhookSecret string `json:"webhookSecret"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+
+	if err := h.svc.UpdateRepo(r.Context(), id, userID, req.RepoURL, req.WebhookSecret); err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}

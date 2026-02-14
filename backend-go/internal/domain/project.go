@@ -16,6 +16,8 @@ type Project struct {
 	Status        string    `json:"status"`
 	ContainerID   *string   `json:"containerId,omitempty"`
 	ContainerName *string   `json:"containerName,omitempty"`
+	RepoURL       *string   `json:"repoUrl,omitempty"`
+	WebhookSecret *string   `json:"webhookSecret,omitempty"`
 	Config        []byte    `json:"-"` // encrypted, never exposed directly
 	CreatedAt     time.Time `json:"createdAt"`
 }
@@ -42,6 +44,8 @@ type ProjectResponse struct {
 	Status        string             `json:"status"`
 	ContainerID   *string            `json:"containerId,omitempty"`
 	ContainerName *string            `json:"containerName,omitempty"`
+	RepoURL       *string            `json:"repoUrl,omitempty"`
+	WebhookSecret *string            `json:"webhookSecret,omitempty"`
 	Config        *SafeProjectConfig `json:"config,omitempty"`
 	CreatedAt     time.Time          `json:"createdAt"`
 }

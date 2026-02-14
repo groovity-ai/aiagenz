@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
 
@@ -23,13 +24,40 @@ type ContainerInfo struct {
 	Uptime string `json:"uptime,omitempty"`
 }
 
+const NetworkName = "aiagenz-network"
+
 // NewContainerService creates a new Docker client.
 func NewContainerService() (*ContainerService, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	return &ContainerService{cli: cli}, nil
+
+	svc := &ContainerService{cli: cli}
+
+	// Ensure shared network exists
+	if err := svc.ensureNetwork(context.Background()); err != nil {
+		log.Printf("⚠️ Failed to ensure network: %v", err)
+	}
+
+	return svc, nil
+}
+
+// ensureNetwork checks if the shared network exists, creating it if not.
+func (s *ContainerService) ensureNetwork(ctx context.Context) error {
+	networks, err := s.cli.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	for _, net := range networks {
+		if net.Name == NetworkName {
+			return nil
+		}
+	}
+
+	_, err = s.cli.NetworkCreate(ctx, NetworkName, network.CreateOptions{})
+	return err
 }
 
 // Inspect returns the status of a container.
@@ -62,14 +90,18 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	nanoCPUs := int64(resources.CPU * 1e9)
 
 	// Inject NODE_OPTIONS to prevent JS heap OOM.
-	// Set max-old-space-size to 75% of container memory, leaving headroom for OS overhead.
 	nodeHeapMB := resources.MemoryMB * 3 / 4
 	env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", nodeHeapMB))
 
+	// Sanitize hostname (Docker doesn't like spaces or special chars in hostname)
+	// We use the container name as hostname for internal DNS
+	hostname := name
+
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image: image,
-			Env:   env,
+			Image:    image,
+			Env:      env,
+			Hostname: hostname,
 		},
 		&container.HostConfig{
 			Runtime: "runsc",
@@ -79,6 +111,7 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 				NanoCPUs:          nanoCPUs,
 			},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+			NetworkMode:   container.NetworkMode(NetworkName), // Attach to shared network
 		},
 		nil, nil, name,
 	)

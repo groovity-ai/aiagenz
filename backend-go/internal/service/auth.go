@@ -212,3 +212,20 @@ func (s *AuthService) DeleteUser(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// GetUserByID returns a user profile by ID (for /api/auth/me).
+func (s *AuthService) GetUserByID(ctx context.Context, id string) (*domain.UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to find user", err)
+	}
+	if user == nil {
+		return nil, domain.ErrNotFound("user not found")
+	}
+	return &domain.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt,
+	}, nil
+}
