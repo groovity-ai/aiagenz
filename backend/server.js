@@ -21,17 +21,17 @@ app.use(express.json());
 
 app.post('/api/auth/login', (req, res) => {
     const { email, password } = req.body;
-    
+
     // MVP: Hardcoded User
     if (email === 'admin@aiagenz.id' && password === 'admin123') {
         const token = jwt.sign(
-            { sub: 'user-admin-001', email, role: 'admin' }, 
-            process.env.JWT_SECRET, 
+            { sub: 'user-admin-001', email, role: 'admin' },
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
         return res.json({ token, user: { id: 'user-admin-001', email } });
     }
-    
+
     res.status(401).json({ error: 'Invalid credentials' });
 });
 
@@ -64,7 +64,7 @@ app.post('/api/projects', async (req, res) => {
         const { name, type, telegramToken, apiKey } = req.body;
         const projectId = uuidv4();
         const containerName = `aiagenz-${projectId}`;
-        
+
         let image = 'openclaw-starter:latest';
         if (name.toLowerCase().includes('sahabatcuan') || type === 'marketplace') image = 'sahabatcuan:latest';
 
@@ -101,8 +101,7 @@ app.post('/api/projects', async (req, res) => {
                     Runtime: 'runsc',
                     Memory: 512 * 1024 * 1024,
                     NanoCpus: 500000000,
-                    RestartPolicy: { Name: 'unless-stopped' },
-                    AutoRemove: true
+                    RestartPolicy: { Name: 'unless-stopped' }
                 }
             });
 
@@ -147,7 +146,7 @@ app.get('/api/projects', async (req, res) => {
         }));
 
         res.json(syncedProjects);
-    } catch(e) {
+    } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
@@ -158,9 +157,9 @@ app.get('/api/projects/:id', async (req, res) => {
         const project = await prisma.project.findFirst({
             where: { id: req.params.id, userId } // Security Check
         });
-        
+
         if (!project) return res.status(404).json({ error: "Not found" });
-        
+
         const info = await getContainerInfo(project.containerId);
         const projectWithStatus = { ...project, status: info.status };
 
@@ -173,7 +172,7 @@ app.get('/api/projects/:id', async (req, res) => {
             };
         }
         res.json(safeProject);
-    } catch(e) {
+    } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
@@ -181,7 +180,7 @@ app.get('/api/projects/:id', async (req, res) => {
 app.post('/api/projects/:id/:action', async (req, res) => {
     const { id, action } = req.params;
     const userId = req.user.sub;
-    
+
     try {
         const project = await prisma.project.findFirst({ where: { id, userId } });
         if (!project || !project.containerId) return res.status(404).json({ error: "Not found or no container" });
@@ -206,7 +205,7 @@ app.post('/api/projects/:id/:action', async (req, res) => {
 app.delete('/api/projects/:id', async (req, res) => {
     const { id } = req.params;
     const userId = req.user.sub;
-    
+
     try {
         const project = await prisma.project.findFirst({ where: { id, userId } });
         if (!project) return res.status(404).json({ error: "Not found" });
@@ -215,7 +214,7 @@ app.delete('/api/projects/:id', async (req, res) => {
             try {
                 const container = docker.getContainer(project.containerId);
                 await container.remove({ force: true });
-            } catch(e) {}
+            } catch (e) { }
         }
 
         await prisma.project.delete({ where: { id } });
@@ -238,7 +237,7 @@ app.get('/api/projects/:id/logs', async (req, res) => {
             tail: 100,
             timestamps: true
         });
-        res.send(logs.toString('utf8')); 
+        res.send(logs.toString('utf8'));
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -253,13 +252,13 @@ wss.on('connection', async (ws, req) => {
     // TODO: WebSocket Auth (Need to pass token via query param or protocol)
     // For MVP, we skip auth on WebSocket or implement simple check if needed.
     // Ideally: ws://host/projects/:id/console?token=...
-    
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const projectId = url.pathname.split('/')[2];
-    
+
     // DB Lookup (Ideally verify user ownership too via token)
     const project = await prisma.project.findUnique({ where: { id: projectId } });
-    
+
     if (!project || !project.containerId) {
         ws.send("Error: Project not found\r\n");
         ws.close();
@@ -267,7 +266,7 @@ wss.on('connection', async (ws, req) => {
     }
 
     console.log(`🔌 Console connected to ${project.containerId}`);
-    
+
     try {
         const container = docker.getContainer(project.containerId);
         const execOptions = {
