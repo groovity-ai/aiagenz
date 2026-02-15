@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const BACKEND_BASE = 'http://localhost:4001/api/projects';
+const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
 
 async function getToken() {
     const cookieStore = await cookies();
@@ -34,7 +34,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         const body = await request.json();
         const res = await fetch(`${BACKEND_BASE}/${id}`, {
             method: 'PUT',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
@@ -53,7 +53,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     try {
-        const res = await fetch(`${BACKEND_BASE}/${id}`, { 
+        const res = await fetch(`${BACKEND_BASE}/${id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
