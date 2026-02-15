@@ -171,11 +171,11 @@ func main() {
 	// Start server
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	server := &http.Server{
-		Addr:         addr,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        addr,
+		Handler:     r,
+		ReadTimeout: 30 * time.Second,
+		// WriteTimeout must be 0 for WebSocket connections (they are long-lived)
+		IdleTimeout: 120 * time.Second,
 	}
 
 	// Graceful shutdown
