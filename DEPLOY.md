@@ -3,18 +3,17 @@
 ## Architecture
 
 ```
-User → https://aiagenz.cloud → Cloudflare (SSL) → VPS:80 → Nginx
-  ├── /          → Frontend  (127.0.0.1:3010)
-  ├── /api/      → Backend   (127.0.0.1:4001)
-  ├── /ws/       → WebSocket (127.0.0.1:4001)
-  └── /health    → Backend   (127.0.0.1:4001)
+User → https://aiagenz.cloud → Cloudflare (SSL) → VPS:80 → Nginx (Docker)
+  ├── /          → Frontend  (host:3010)
+  ├── /api/      → Backend   (host:4001)
+  ├── /ws/       → WebSocket (host:4001)
+  └── /health    → Backend   (host:4001)
 ```
 
 ## Prerequisites
 
 - VPS with Docker & Docker Compose installed
 - Domain `aiagenz.cloud` pointing to VPS IP via Cloudflare DNS (Proxy ON)
-- Nginx installed on VPS (`sudo apt install nginx`)
 
 ---
 
@@ -66,82 +65,43 @@ docker compose up -d --build
 
 Verify:
 ```bash
-# Check all containers are running
 docker compose ps
-
-# Test backend health
 curl http://localhost:4001/health
-
-# Test frontend
 curl -I http://localhost:3010
 ```
 
 ---
 
-## Step 3: Setup Nginx
+## Step 3: Setup Nginx (Docker)
+
+Nginx runs in a **separate** Docker container via `docker-compose.nginx.yml`.
 
 ```bash
-# Copy config
-sudo cp nginx/aiagenz.cloud.conf /etc/nginx/sites-available/aiagenz.cloud
-
-# Enable site
-sudo ln -sf /etc/nginx/sites-available/aiagenz.cloud /etc/nginx/sites-enabled/
-
-# Test config
-sudo nginx -t
-
-# Reload
-sudo systemctl reload nginx
+docker compose -f docker-compose.nginx.yml up -d
 ```
 
 Verify:
 ```bash
-curl -I http://localhost/health
-# Should return 200 OK
-```
-
----
-
-## Step 3: Setup External Nginx (Docker)
-
-We will run Nginx in a **separate** Docker container (as registered in `docker-compose.nginx.yml`).
-
-```bash
-# Start Nginx
-docker compose -f docker-compose.nginx.yml up -d
-```
-
-Verify it's running:
-```bash
 curl -I http://localhost
-# Should return 200 OK (proxied to your app)
 ```
 
 ---
 
 ## Step 4: SSL (Certbot in Docker)
 
-Generate SSL certificates using the `certbot` container:
-
 ```bash
 # Request certificate
-docker compose -f docker-compose.nginx.yml run --rm certbot certonly --webroot --webroot-path /var/www/certbot -d aiagenz.cloud -d www.aiagenz.cloud
-```
+docker compose -f docker-compose.nginx.yml run --rm certbot certonly \
+  --webroot --webroot-path /var/www/certbot \
+  -d aiagenz.cloud -d www.aiagenz.cloud
 
-After success, **edit** `nginx/aiagenz.cloud.conf` to uncomment SSL lines (if you have them) or just reload Nginx to pick up changes (Nginx config might need updates to point to new certs).
-
-**Reload Nginx:**
-```bash
+# Reload Nginx to pick up new certs
 docker compose -f docker-compose.nginx.yml exec nginx nginx -s reload
 ```
 
 ---
 
 ## Step 5: Cloudflare DNS
-
----
-
-## Step 4: Cloudflare DNS
 
 1. Go to Cloudflare Dashboard → `aiagenz.cloud` → DNS
 2. Add **A Record**:
@@ -150,19 +110,18 @@ docker compose -f docker-compose.nginx.yml exec nginx nginx -s reload
    | A    | @    | YOUR_VPS_IP | ✅ Proxied |
    | A    | www  | YOUR_VPS_IP | ✅ Proxied |
 
-3. Go to **SSL/TLS** → Set mode to **Full**
-4. Go to **SSL/TLS → Edge Certificates** → Enable **Always Use HTTPS**
+3. **SSL/TLS** → Mode = **Full**
+4. **SSL/TLS → Edge Certificates** → Enable **Always Use HTTPS**
 
 ---
 
-## Step 5: Verify
+## Step 6: Verify
 
 ```bash
-# From your machine (not VPS)
 curl https://aiagenz.cloud/health
 ```
 
-Open `https://aiagenz.cloud` in browser — should see the dashboard.
+Open `https://aiagenz.cloud` in browser.
 
 ---
 
@@ -172,13 +131,15 @@ Open `https://aiagenz.cloud` in browser — should see the dashboard.
 cd /opt/aiagenz
 git pull
 docker compose up -d --build
+
+# If Nginx config changed:
+docker compose -f docker-compose.nginx.yml up -d
 ```
 
 ---
 
 ## Firewall
 
-Only these ports need to be open:
 ```bash
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP (Cloudflare → Nginx)
@@ -192,9 +153,57 @@ sudo ufw enable
 
 ## Troubleshooting
 
+### Quick Reference
+
 | Symptom | Fix |
 |---------|-----|
 | 502 Bad Gateway | Backend not running: `docker compose logs backend` |
-| WebSocket Error | Check Nginx logs: `tail -f /var/log/nginx/error.log` |
+| WebSocket Error | Check: `tail -f /var/log/nginx/error.log` |
 | CORS Error | Add domain to `CORS_ORIGINS` in `backend-go/.env` |
 | SSL Error | Cloudflare SSL mode must be **Full** (not Flexible) |
+| 401 after login | See **Auth Cookie + Cloudflare** below |
+| Console disconnects | Backend `WriteTimeout` must be 0 for WebSocket |
+
+---
+
+### Auth Cookie + Cloudflare (401 Unauthorized)
+
+**Problem:** User logs in successfully, but all API calls return 401.
+
+**Root Cause:** Cloudflare terminates SSL, so the internal chain is HTTP:
+
+```
+Browser (HTTPS) → Cloudflare (SSL off) → Nginx (HTTP) → Next.js (HTTP)
+                                                ↑
+                                        $scheme = "http"
+```
+
+The JWT cookie is set with `secure: true` (HTTPS-only). Two things break:
+
+1. **Nginx `$scheme`** resolves to `http` → Next.js sees `X-Forwarded-Proto: http`
+2. **Next.js** doesn't know the real protocol is HTTPS → cookie may not be stored
+
+**Fix (already applied in codebase):**
+
+| File | Change |
+|------|--------|
+| `nginx/aiagenz.cloud.conf` | `X-Forwarded-Proto` hardcoded to `https` |
+| `session/route.ts` | `secure` flag reads `X-Forwarded-Proto` dynamically |
+
+**If still broken:**
+1. Clear cookies for `aiagenz.cloud`
+2. Log out → Log in again
+3. Verify Nginx has `proxy_set_header X-Forwarded-Proto https;`
+4. Verify `CORS_ORIGINS` includes `https://aiagenz.cloud`
+
+---
+
+### WebSocket Console Not Connecting
+
+Console connects via WebSocket through Nginx at `/ws/`.
+
+**Checklist:**
+1. Nginx `/ws/` block has `Upgrade` and `Connection "upgrade"` headers
+2. `proxy_read_timeout` and `proxy_send_timeout` are `3600s`
+3. Backend HTTP server has **no `WriteTimeout`** (WebSocket is long-lived)
+4. Port 4001 does NOT need to be exposed — Nginx handles the proxy
