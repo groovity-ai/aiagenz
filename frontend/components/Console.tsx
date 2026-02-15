@@ -69,12 +69,11 @@ export default function Console({ projectId }: ConsoleProps) {
             return
         }
 
-        // Build WebSocket URL — connect directly to backend port
+        // Build WebSocket URL — through Nginx /ws/ proxy (same host, same port)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || '4001'
-        const wsUrl = `${protocol}//${window.location.hostname}:${backendPort}/projects/${projectId}/console?token=${encodeURIComponent(token)}`
+        const wsUrl = `${protocol}//${window.location.host}/ws/projects/${projectId}/console?token=${encodeURIComponent(token)}`
 
-        term.write(`\x1b[90mConnecting to ${window.location.hostname}:${backendPort}...\x1b[0m\r\n`)
+        term.write(`\x1b[90mConnecting to ${window.location.host}...\x1b[0m\r\n`)
 
         const ws = new WebSocket(wsUrl)
         wsRef.current = ws

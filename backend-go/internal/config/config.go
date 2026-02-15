@@ -40,7 +40,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("ENCRYPTION_KEY must be exactly 32 bytes, got %d", len(encKey))
 	}
 
-	origins := strings.Split(getEnv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3010"), ",")
+	origins := strings.Split(getEnv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3010,https://aiagenz.cloud"), ",")
 	for i := range origins {
 		origins[i] = strings.TrimSpace(origins[i])
 	}
