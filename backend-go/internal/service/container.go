@@ -89,9 +89,9 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	memoryReservation := memoryBytes / 2 // 50% soft guarantee
 	nanoCPUs := int64(resources.CPU * 1e9)
 
-	// Inject NODE_OPTIONS to prevent JS heap OOM and force IPv4 (fix fetch failed)
+	// Inject NODE_OPTIONS to prevent JS heap OOM
 	nodeHeapMB := resources.MemoryMB * 3 / 4
-	env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d --dns-result-order=ipv4first", nodeHeapMB))
+	env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", nodeHeapMB))
 
 	// Sanitize hostname (Docker doesn't like spaces or special chars in hostname)
 	// We use the container name as hostname for internal DNS
@@ -113,7 +113,7 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 			},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			NetworkMode:   container.NetworkMode(NetworkName), // Attach to shared network
-			DNS:           []string{"103.246.107.10", "8.8.8.8"}, // Custom DNS Provider
+			// DNS: handled by Docker's embedded DNS (reachable via gVisor --network=host in daemon.json)
 		},
 		nil, nil, name,
 	)
