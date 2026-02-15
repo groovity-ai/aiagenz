@@ -138,6 +138,28 @@ docker compose -f docker-compose.nginx.yml up -d
 
 ---
 
+## Performance Optimization
+
+If the site feels sluggish behind Cloudflare:
+
+### 1. Cloudflare Dashboard Settings
+- **Speed → Optimization → Content Optimization**: 
+  - Enable **Brotli**
+  - Enable **Rocket Loader** (improves JS loading)
+  - Enable **Auto Minify** (HTML, CSS, JS)
+- **Speed → Optimization → Protocols**:
+  - Enable **HTTP/3 (with QUIC)**
+  - Enable **0-RTT Connection Resumption**
+- **Caching → Configuration**:
+  - Set **Browser Cache TTL** to 1 month
+
+### 2. Nginx Optimizations (Included in config)
+- **Gzip Compression**: Compresses text/json before sending to Cloudflare
+- **Proxy Buffering**: Optimized for larger API responses
+- **Static Asset Caching**: `expires 1y` for images and scripts
+
+---
+
 ## Firewall
 
 ```bash
