@@ -42,6 +42,7 @@ export default function Console({ projectId }: ConsoleProps) {
 
         const term = new Terminal({
             cursorBlink: true,
+            convertEol: true, // Fix glitch: treat \n as \r\n
             theme: {
                 background: '#09090b',
                 foreground: '#a1a1aa',
@@ -99,13 +100,11 @@ export default function Console({ projectId }: ConsoleProps) {
             term.write(event.data)
         }
 
-        ws.onerror = (event: Event) => {
+        ws.onerror = () => {
             setError(true)
             setConnected(false)
             term.write('\r\n\x1b[31m❌ Connection Error — backend may not be reachable.\x1b[0m\r\n')
-            term.write(`\x1b[90mURL: ${wsUrl}\x1b[0m\r\n`)
-            term.write('\x1b[90mCheck browser DevTools → Network tab for the WebSocket request details.\x1b[0m\r\n')
-            console.error('[Console WS] Connection error:', { url: wsUrl, event })
+            term.write('\x1b[90mMake sure the backend is running and port is accessible.\x1b[0m\r\n')
         }
 
         ws.onclose = () => {
