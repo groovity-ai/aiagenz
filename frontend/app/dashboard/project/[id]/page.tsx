@@ -102,7 +102,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                     {project.status === 'running' ? <RotateCw className="h-4 w-4"/> : <Play className="h-4 w-4"/>}
                     {project.status === 'running' ? "Restart" : "Start"}
                 </Button>
-                <Button size="sm" variant="destructive" size="icon" onClick={handleDelete} disabled={loading}>
+                <Button variant="destructive" size="icon" onClick={handleDelete} disabled={loading}>
                     <Trash2 className="h-4 w-4" />
                 </Button>
             </div>

@@ -38,10 +38,30 @@ services:
     environment:
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - BACKEND_URL=http://backend:4001
     networks:
       - aiagenz-network
     depends_on:
       - backend
+
+  # ─── Database ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: aiagenz-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: aiagenz
+      POSTGRES_PASSWORD: rahasia_bos
+      POSTGRES_DB: aiagenz
+    volumes:
+      - aiagenz-data:/var/lib/postgresql/data
+    networks:
+      - aiagenz-network
+
+volumes:
+  aiagenz-data:
 
 networks:
   aiagenz-network:
