@@ -102,6 +102,22 @@ curl -I http://localhost/health
 
 ---
 
+## Step 3.5: SSL (Certbot)
+
+If you want to use **Full (Strict)** SSL in Cloudflare or access directly via HTTPS without Cloudflare:
+
+```bash
+# Install Certbot
+sudo apt install certbot python3-certbot-nginx
+
+# Generate Certificate (Automatically configures Nginx)
+sudo certbot --nginx -d aiagenz.cloud -d www.aiagenz.cloud
+```
+
+> Certbot will automatically start a scheduler to renew certs.
+
+---
+
 ## Step 4: Cloudflare DNS
 
 1. Go to Cloudflare Dashboard → `aiagenz.cloud` → DNS
