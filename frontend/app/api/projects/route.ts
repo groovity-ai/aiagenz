@@ -6,7 +6,13 @@ const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/
 // Helper to get token (Manual Auth)
 async function getToken() {
     const cookieStore = await cookies();
-    return cookieStore.get('token')?.value;
+    const token = cookieStore.get('token')?.value;
+    
+    // Debug: Print all cookies
+    console.log('[Debug] Cookies received:', cookieStore.getAll().map(c => c.name));
+    if (!token) console.log('[Debug] Token is missing!');
+    
+    return token;
 }
 
 export async function GET(request: Request) {

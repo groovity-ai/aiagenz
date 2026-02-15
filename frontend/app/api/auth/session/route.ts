@@ -7,7 +7,9 @@ export async function POST(request: Request) {
   response.cookies.set('token', token, { 
     httpOnly: false, // Allow client JS (WebSocket) to read token
     path: '/',
-    maxAge: 60 * 60 * 24 * 7 // 7 days
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    secure: true,
+    sameSite: 'lax'
   })
   
   return response
