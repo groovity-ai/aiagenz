@@ -1,9 +1,6 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { Terminal } from "xterm"
-import { FitAddon } from "xterm-addon-fit"
-import { WebLinksAddon } from "xterm-addon-web-links"
 import "xterm/css/xterm.css"
 
 interface ConsoleProps {
@@ -23,73 +20,89 @@ export default function Console({ projectId }: ConsoleProps) {
     useEffect(() => {
         if (!terminalRef.current) return
 
-        // Init Xterm
-        const term = new Terminal({
-            cursorBlink: true,
-            theme: {
-                background: '#09090b', // zinc-950 (Shadcn Dark)
-                foreground: '#a1a1aa', // zinc-400
-                cursor: '#ffffff'
-            },
-            fontFamily: 'monospace',
-            fontSize: 14
-        })
+        let term: any = null;
+        let ws: WebSocket | null = null;
+        let resizeObserver: ResizeObserver | null = null;
 
-        const fitAddon = new FitAddon()
-        term.loadAddon(fitAddon)
-        term.loadAddon(new WebLinksAddon())
+        // Dynamic import inside useEffect (Client-side ONLY)
+        const initTerminal = async () => {
+            const { Terminal } = await import("xterm")
+            const { FitAddon } = await import("xterm-addon-fit")
+            const { WebLinksAddon } = await import("xterm-addon-web-links")
 
-        term.open(terminalRef.current)
-        fitAddon.fit()
+            term = new Terminal({
+                cursorBlink: true,
+                theme: {
+                    background: '#09090b', // zinc-950 (Shadcn Dark)
+                    foreground: '#a1a1aa', // zinc-400
+                    cursor: '#ffffff'
+                },
+                fontFamily: 'monospace',
+                fontSize: 14
+            })
 
-        // Get JWT token for WebSocket authentication
-        const token = getTokenFromCookies()
-        if (!token) {
-            term.write('\r\n\x1b[31m❌ Not authenticated. Please log in first.\x1b[0m\r\n')
-            return
-        }
+            const fitAddon = new FitAddon()
+            term.loadAddon(fitAddon)
+            term.loadAddon(new WebLinksAddon())
 
-        // Init WebSocket with JWT auth via query param
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const wsUrl = `${protocol}//${window.location.hostname}:4001/projects/${projectId}/console?token=${encodeURIComponent(token)}`
-
-        const ws = new WebSocket(wsUrl)
-        wsRef.current = ws
-
-        ws.onopen = () => {
-            term.write('\r\n\x1b[32m🔌 Connected to Agent Container...\x1b[0m\r\n')
-            term.write('\x1b[34mℹ️ Type commands to interact (e.g. "ls", "top")\x1b[0m\r\n\r\n')
-        }
-
-        ws.onmessage = (event) => {
-            term.write(event.data)
-        }
-
-        ws.onerror = () => {
-            term.write('\r\n\x1b[31m❌ Connection Error\x1b[0m\r\n')
-        }
-
-        ws.onclose = () => {
-            term.write('\r\n\x1b[33m🔌 Connection Closed\x1b[0m\r\n')
-        }
-
-        // Terminal Input -> WebSocket
-        term.onData((data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(data)
+            if (terminalRef.current) {
+                term.open(terminalRef.current)
+                fitAddon.fit()
             }
-        })
 
-        // Resize observer
-        const resizeObserver = new ResizeObserver(() => {
-            fitAddon.fit()
-        })
-        resizeObserver.observe(terminalRef.current)
+            // Get JWT token for WebSocket authentication
+            const token = getTokenFromCookies()
+            if (!token) {
+                term.write('\r\n\x1b[31m❌ Not authenticated. Please log in first.\x1b[0m\r\n')
+                return
+            }
+
+            // Init WebSocket with JWT auth via query param
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+            const wsUrl = `${protocol}//${window.location.hostname}:4001/projects/${projectId}/console?token=${encodeURIComponent(token)}`
+
+            ws = new WebSocket(wsUrl)
+            wsRef.current = ws
+
+            ws.onopen = () => {
+                term.write('\r\n\x1b[32m🔌 Connected to Agent Container...\x1b[0m\r\n')
+                term.write('\x1b[34mℹ️ Type commands to interact (e.g. "ls", "top")\x1b[0m\r\n\r\n')
+            }
+
+            ws.onmessage = (event: MessageEvent) => {
+                term.write(event.data)
+            }
+
+            ws.onerror = () => {
+                term.write('\r\n\x1b[31m❌ Connection Error\x1b[0m\r\n')
+            }
+
+            ws.onclose = () => {
+                term.write('\r\n\x1b[33m🔌 Connection Closed\x1b[0m\r\n')
+            }
+
+            // Terminal Input -> WebSocket
+            term.onData((data: string) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(data)
+                }
+            })
+
+            // Resize observer
+            resizeObserver = new ResizeObserver(() => {
+                fitAddon.fit()
+            })
+            if (terminalRef.current) {
+                resizeObserver.observe(terminalRef.current)
+            }
+        }
+
+        initTerminal()
 
         return () => {
-            ws.close()
-            term.dispose()
-            resizeObserver.disconnect()
+            if (ws) ws.close()
+            if (term) term.dispose()
+            if (resizeObserver) resizeObserver.disconnect()
         }
     }, [projectId])
 

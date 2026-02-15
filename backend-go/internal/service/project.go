@@ -199,6 +199,12 @@ func (s *ProjectService) buildEnvVars(projectID, telegramToken, apiKey, provider
 			"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=true",
 			fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", telegramToken),
 		)
+	} else {
+		// Explicitly disable Telegram if no token provided (override image defaults)
+		env = append(env, 
+			"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=false",
+			"OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=", // Clear any default token
+		)
 	}
 
 	if provider == "" { provider = "google" }
@@ -211,10 +217,11 @@ func (s *ProjectService) buildEnvVars(projectID, telegramToken, apiKey, provider
 
 	if provider == "google-antigravity" {
 		env = append(env, "OPENCLAW_ANTIGRAVITY_EMAIL=mozitop99@gmail.com")
-	} else {
-		// Map flattened env vars for standard providers
-		prefix := strings.ToUpper(provider)
-		env = append(env, fmt.Sprintf("OPENCLAW_AUTH_PROFILES_%s_DEFAULT_APIKEY=%s", prefix, apiKey))
+	} else if apiKey != "" {
+		// Inject Auth Profiles as JSON (More reliable than flattened env vars)
+		authJSON := fmt.Sprintf(`{"profiles":{"%s:default":{"type":"api_key","provider":"%s","key":"%s"}},"lastGood":{"%s":"%s:default"}}`, 
+			provider, provider, apiKey, provider, provider)
+		env = append(env, fmt.Sprintf("OPENCLAW_AUTH_PROFILES=%s", authJSON))
 	}
 
 	env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY=%s", model))

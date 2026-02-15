@@ -17,10 +17,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         const res = await fetch(`${BACKEND_BASE}/${id}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (!res.ok) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+        if (!res.ok) {
+            console.error(`Backend fetch failed: ${res.status} ${res.statusText}`);
+            return NextResponse.json({ error: 'Backend Error' }, { status: res.status });
+        }
         const data = await res.json();
         return NextResponse.json(data);
     } catch (e) {
+        console.error('Proxy Error:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }
