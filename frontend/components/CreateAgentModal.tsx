@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { motion, AnimatePresence } from "framer-motion"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface Plan {
     id: string
@@ -44,6 +45,13 @@ const DEPLOY_STAGES = [
     "Establishing uplink...",
 ]
 
+const PROVIDERS = {
+    google: ["google/gemini-3-flash-preview", "google/gemini-3-pro-preview"],
+    openai: ["openai/gpt-4o", "openai/gpt-3.5-turbo"],
+    anthropic: ["anthropic/claude-3-5-sonnet"],
+    "google-antigravity": ["google-antigravity/gemini-3-pro-high", "google-antigravity/gemini-3-pro-low"]
+}
+
 export default function CreateAgentModal({ open, onClose, onCreated }: CreateAgentModalProps) {
     const router = useRouter()
     const [step, setStep] = useState<Step>(0)
@@ -55,6 +63,9 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
     const [selectedPlan, setSelectedPlan] = useState("starter")
     const [telegramToken, setTelegramToken] = useState("")
     const [apiKey, setApiKey] = useState("")
+    const [provider, setProvider] = useState("google")
+    const [model, setModel] = useState("google/gemini-3-flash-preview")
+    const [availableModels, setAvailableModels] = useState<string[]>(PROVIDERS.google)
 
     // Deploy state
     const [deploying, setDeploying] = useState(false)
@@ -86,6 +97,8 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
             setSelectedPlan("starter")
             setTelegramToken("")
             setApiKey("")
+            setProvider("google")
+            setModel("gemini-3-flash-preview")
             setDeploying(false)
             setDeployStage(0)
             setDeploySuccess(false)
@@ -95,6 +108,11 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
             setCreatedProjectId(null)
         }
     }, [open])
+
+    useEffect(() => {
+        setAvailableModels(PROVIDERS[provider as keyof typeof PROVIDERS] || [])
+        setModel(PROVIDERS[provider as keyof typeof PROVIDERS]?.[0] || "")
+    }, [provider])
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -110,10 +128,10 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
         switch (step) {
             case 0: return agentName.trim().length > 0
             case 1: return selectedPlan !== ""
-            case 2: return telegramToken.trim().length > 0
+            case 2: return true // Config optional now
             default: return false
         }
-    }, [step, agentName, selectedPlan, telegramToken])
+    }, [step, agentName, selectedPlan])
 
     const handleDeploy = async () => {
         setDeploying(true)
@@ -139,6 +157,8 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
                     plan: selectedPlan,
                     telegramToken,
                     apiKey,
+                    provider,
+                    model
                 }),
             })
             const data = await res.json()
@@ -346,7 +366,7 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
                                         initial={{ opacity: 0, x: 20 }}
                                         animate={{ opacity: 1, x: 0 }}
                                         exit={{ opacity: 0, x: -20 }}
-                                        className="space-y-8"
+                                        className="space-y-6"
                                     >
                                         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-4">
                                             <div className="flex items-center gap-4">
@@ -368,29 +388,57 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
                                             </div>
                                         </div>
 
-                                        <div className="space-y-6">
+                                        <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                                <Label htmlFor="tg-token">Telegram Bot Token</Label>
-                                                <Input
-                                                    id="tg-token"
-                                                    type="password"
-                                                    placeholder="Required for bot operation"
-                                                    value={telegramToken}
-                                                    onChange={(e) => setTelegramToken(e.target.value)}
-                                                    className="h-12"
-                                                />
+                                                <Label>AI Provider</Label>
+                                                <Select value={provider} onValueChange={setProvider}>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Select Provider" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="google">Google</SelectItem>
+                                                        <SelectItem value="openai">OpenAI</SelectItem>
+                                                        <SelectItem value="anthropic">Anthropic</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
                                             <div className="space-y-2">
-                                                <Label htmlFor="api-key">Gemini API Key <span className="text-muted-foreground font-normal">(Optional)</span></Label>
-                                                <Input
-                                                    id="api-key"
-                                                    type="password"
-                                                    placeholder="For LLM capabilities"
-                                                    value={apiKey}
-                                                    onChange={(e) => setApiKey(e.target.value)}
-                                                    className="h-12"
-                                                />
+                                                <Label>Model</Label>
+                                                <Select value={model} onValueChange={setModel}>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Select Model" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {availableModels.map(m => (
+                                                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label htmlFor="api-key">API Key <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+                                            <Input
+                                                id="api-key"
+                                                type="password"
+                                                placeholder={`sk-... (${provider} key)`}
+                                                value={apiKey}
+                                                onChange={(e) => setApiKey(e.target.value)}
+                                                className="h-12"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label htmlFor="tg-token">Telegram Bot Token <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+                                            <Input
+                                                id="tg-token"
+                                                type="password"
+                                                placeholder="Required for bot operation"
+                                                value={telegramToken}
+                                                onChange={(e) => setTelegramToken(e.target.value)}
+                                                className="h-12"
+                                            />
                                         </div>
                                     </motion.div>
                                 )}

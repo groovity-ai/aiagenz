@@ -18,7 +18,7 @@ type Project struct {
 	ContainerName *string   `json:"containerName,omitempty"`
 	RepoURL       *string   `json:"repoUrl,omitempty"`
 	WebhookSecret *string   `json:"webhookSecret,omitempty"`
-	Config        []byte    `json:"-"` // encrypted, never exposed directly
+	Config        []byte    `json:"-"` // encrypted
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
@@ -26,15 +26,19 @@ type Project struct {
 type ProjectConfig struct {
 	TelegramToken string `json:"telegramToken,omitempty"`
 	APIKey        string `json:"apiKey,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
 }
 
 // SafeProjectConfig returns masked config for API responses.
 type SafeProjectConfig struct {
 	TelegramToken string `json:"telegramToken,omitempty"`
 	APIKey        string `json:"apiKey,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
 }
 
-// ProjectResponse is the API response for a project with masked config.
+// ProjectResponse is the API response for a project.
 type ProjectResponse struct {
 	ID            string             `json:"id"`
 	UserID        string             `json:"userId"`
@@ -57,11 +61,22 @@ type CreateProjectRequest struct {
 	Plan          string `json:"plan" validate:"required,oneof=starter pro business"`
 	TelegramToken string `json:"telegramToken" validate:"required"`
 	APIKey        string `json:"apiKey"`
+	Provider      string `json:"provider" validate:"omitempty,oneof=google openai anthropic google-antigravity"`
+	Model         string `json:"model"`
 }
 
 // ControlAction represents a container control action.
 type ControlAction struct {
 	Action string `json:"action" validate:"required,oneof=start stop restart"`
+}
+
+// UpdateProjectRequest is the validated input for updating a project config.
+type UpdateProjectRequest struct {
+	Name          string `json:"name"`
+	TelegramToken string `json:"telegramToken"`
+	APIKey        string `json:"apiKey"`
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
 }
 
 // LoginRequest is the validated input for logging in.
@@ -120,3 +135,4 @@ type UserResponse struct {
 func NewUserID() string {
 	return uuid.New().String()
 }
+

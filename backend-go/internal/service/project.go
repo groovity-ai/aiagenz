@@ -51,18 +51,15 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		image = "sahabatcuan:latest"
 	}
 
-	// Build env vars for the container
-	env := []string{
-		fmt.Sprintf("TELEGRAM_BOT_TOKEN=%s", req.TelegramToken),
-		fmt.Sprintf("GEMINI_API_KEY=%s", req.APIKey),
-		fmt.Sprintf("PROJECT_ID=%s", projectID),
-		"OPENCLAW_CONFIG_PATH=/app/config/openclaw.json",
-	}
+	// Build env vars for the container (ENV Config Mode - Patched)
+	env := s.buildEnvVars(projectID, req.TelegramToken, req.APIKey, req.Provider, req.Model)
 
 	// Encrypt config before storing
 	configJSON, _ := json.Marshal(domain.ProjectConfig{
 		TelegramToken: req.TelegramToken,
 		APIKey:        req.APIKey,
+		Provider:      req.Provider,
+		Model:         req.Model,
 	})
 	encryptedConfig, err := s.enc.Encrypt(configJSON)
 	if err != nil {
@@ -89,7 +86,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	// Create and start Docker container with plan-based resources
 	plan := domain.GetPlan(req.Plan)
 	resources := ContainerResources{
-		MemoryMB: plan.MemoryMB,
+		MemoryMB: 2048, // Bump to 2GB for OpenClaw stability
 		CPU:      plan.CPU,
 	}
 	containerID, err := s.container.Create(ctx, containerName, image, env, resources)
@@ -111,7 +108,119 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	return project, nil
 }
 
-// List returns all projects for a user with live Docker status.
+// Update updates project configuration and redeploys container if needed.
+func (s *ProjectService) Update(ctx context.Context, id, userID string, req *domain.UpdateProjectRequest) (*domain.Project, error) {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to get project", err)
+	}
+	if project == nil {
+		return nil, domain.ErrNotFound("project not found")
+	}
+
+	// Decrypt existing config
+	var currentConfig domain.ProjectConfig
+	if project.Config != nil {
+		decrypted, err := s.enc.Decrypt(string(project.Config))
+		if err == nil {
+			_ = json.Unmarshal(decrypted, &currentConfig)
+		}
+	}
+
+	// Update values if provided
+	needsRedeploy := false
+	if req.Name != "" {
+		project.Name = req.Name
+	}
+	if req.TelegramToken != "" && req.TelegramToken != currentConfig.TelegramToken {
+		currentConfig.TelegramToken = req.TelegramToken
+		needsRedeploy = true
+	}
+	if req.APIKey != "" && req.APIKey != currentConfig.APIKey {
+		currentConfig.APIKey = req.APIKey
+		needsRedeploy = true
+	}
+	if req.Provider != "" && req.Provider != currentConfig.Provider {
+		currentConfig.Provider = req.Provider
+		needsRedeploy = true
+	}
+	if req.Model != "" && req.Model != currentConfig.Model {
+		currentConfig.Model = req.Model
+		needsRedeploy = true
+	}
+
+	// Re-encrypt config
+	configJSON, _ := json.Marshal(currentConfig)
+	encryptedConfig, err := s.enc.Encrypt(configJSON)
+	if err != nil {
+		return nil, domain.ErrInternal("failed to encrypt config", err)
+	}
+	project.Config = []byte(encryptedConfig)
+
+	// Redeploy Container if config changed
+	if needsRedeploy && project.ContainerID != nil {
+		_ = s.container.Remove(ctx, *project.ContainerID)
+
+		image := "openclaw-starter:latest"
+		if strings.Contains(strings.ToLower(project.Name), "sahabatcuan") || project.Type == "marketplace" {
+			image = "sahabatcuan:latest"
+		}
+
+		env := s.buildEnvVars(project.ID, currentConfig.TelegramToken, currentConfig.APIKey, currentConfig.Provider, currentConfig.Model)
+		plan := domain.GetPlan(project.Plan)
+		resources := ContainerResources{MemoryMB: 2048, CPU: plan.CPU}
+
+		newContainerID, err := s.container.Create(ctx, *project.ContainerName, image, env, resources)
+		if err != nil {
+			return nil, domain.ErrInternal("failed to recreate container", err)
+		}
+		
+		if err := s.container.Start(ctx, newContainerID); err != nil {
+			return nil, domain.ErrInternal("failed to start new container", err)
+		}
+		
+		project.ContainerID = &newContainerID
+		_ = s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
+	}
+
+	return project, nil
+}
+
+func (s *ProjectService) buildEnvVars(projectID, telegramToken, apiKey, provider, model string) []string {
+	env := []string{
+		fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", projectID),
+		"OPENCLAW_GATEWAY_AUTH_MODE=token",
+		"OPENCLAW_GATEWAY_BIND=auto",
+		"OPENCLAW_GATEWAY_PORT=18789",
+		"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=true",
+		fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", telegramToken),
+	}
+
+	if provider == "" { provider = "google" }
+	if model == "" { model = "google/gemini-3-flash-preview" }
+
+	// Ensure model has prefix
+	if !strings.Contains(model, "/") {
+		model = fmt.Sprintf("%s/%s", provider, model)
+	}
+
+	if provider == "google-antigravity" {
+		env = append(env, "OPENCLAW_ANTIGRAVITY_EMAIL=mozitop99@gmail.com")
+	} else {
+		// Map flattened env vars for standard providers
+		prefix := strings.ToUpper(provider)
+		env = append(env, fmt.Sprintf("OPENCLAW_AUTH_PROFILES_%s_DEFAULT_APIKEY=%s", prefix, apiKey))
+	}
+
+	env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY=%s", model))
+	
+	// Brute force backup
+	env = append(env, fmt.Sprintf("OPENCLAW_MODEL=%s", model))
+
+	return env
+}
+
+// List returns all projects for a user.
 func (s *ProjectService) List(ctx context.Context, userID string) ([]*domain.ProjectResponse, error) {
 	projects, err := s.repo.FindAllByUser(ctx, userID)
 	if err != nil {
@@ -143,7 +252,7 @@ func (s *ProjectService) List(ctx context.Context, userID string) ([]*domain.Pro
 	return responses, nil
 }
 
-// GetByID returns a single project with masked config.
+// GetByID returns a project with masked config.
 func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domain.ProjectResponse, error) {
 	project, err := s.repo.FindByID(ctx, id, userID)
 	if err != nil {
@@ -173,7 +282,6 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 		CreatedAt:     project.CreatedAt,
 	}
 
-	// Decrypt and mask config
 	if project.Config != nil {
 		decrypted, err := s.enc.Decrypt(string(project.Config))
 		if err == nil {
@@ -182,6 +290,8 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 				resp.Config = &domain.SafeProjectConfig{
 					TelegramToken: maskSecret(cfg.TelegramToken),
 					APIKey:        maskSecret(cfg.APIKey),
+					Provider:      cfg.Provider,
+					Model:         cfg.Model,
 				}
 			}
 		}
@@ -190,114 +300,56 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 	return resp, nil
 }
 
-// Control performs start/stop/restart on a project container.
+// Control handles start/stop/restart.
 func (s *ProjectService) Control(ctx context.Context, id, userID string, action *domain.ControlAction) error {
-	if err := s.validate.Struct(action); err != nil {
-		return domain.ErrValidation(formatValidationErrors(err))
-	}
-
 	project, err := s.repo.FindByID(ctx, id, userID)
-	if err != nil {
-		return domain.ErrInternal("failed to get project", err)
-	}
-	if project == nil || project.ContainerID == nil {
-		return domain.ErrNotFound("project not found or no container")
+	if err != nil || project == nil || project.ContainerID == nil {
+		return domain.ErrNotFound("project or container not found")
 	}
 
 	switch action.Action {
-	case "start":
-		err = s.container.Start(ctx, *project.ContainerID)
-	case "stop":
-		err = s.container.Stop(ctx, *project.ContainerID)
-	case "restart":
-		err = s.container.Restart(ctx, *project.ContainerID)
-	default:
-		return domain.ErrBadRequest("invalid action")
+	case "start": err = s.container.Start(ctx, *project.ContainerID)
+	case "stop": err = s.container.Stop(ctx, *project.ContainerID)
+	case "restart": err = s.container.Restart(ctx, *project.ContainerID)
+	default: return domain.ErrBadRequest("invalid action")
 	}
 
 	if err != nil {
-		return domain.ErrInternal("failed to "+action.Action+" container", err)
+		return domain.ErrInternal("failed container action", err)
 	}
 
 	newStatus := "running"
-	if action.Action == "stop" {
-		newStatus = "exited"
-	}
+	if action.Action == "stop" { newStatus = "exited" }
 	_ = s.repo.UpdateStatus(ctx, id, newStatus, project.ContainerID)
 
 	return nil
 }
 
-// UpdateRepo updates the GitHub repository details for a project.
 func (s *ProjectService) UpdateRepo(ctx context.Context, id, userID, repoURL, webhookSecret string) error {
-	project, err := s.repo.FindByID(ctx, id, userID)
-	if err != nil {
-		return domain.ErrInternal("failed to get project", err)
-	}
-	if project == nil {
-		return domain.ErrNotFound("project not found")
-	}
-
-	if err := s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret); err != nil {
-		return domain.ErrInternal("failed to update repo", err)
-	}
-
-	return nil
+	return s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret)
 }
 
-// Delete destroys a project and its container.
 func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
-	project, err := s.repo.FindByID(ctx, id, userID)
-	if err != nil {
-		return domain.ErrInternal("failed to get project", err)
-	}
-	if project == nil {
-		return domain.ErrNotFound("project not found")
-	}
-
-	if project.ContainerID != nil {
+	project, _ := s.repo.FindByID(ctx, id, userID)
+	if project != nil && project.ContainerID != nil {
 		_ = s.container.Remove(ctx, *project.ContainerID)
 	}
-
-	if err := s.repo.Delete(ctx, id); err != nil {
-		return domain.ErrInternal("failed to delete project", err)
-	}
-	return nil
+	return s.repo.Delete(ctx, id)
 }
 
-// Logs returns the last N lines of container logs.
 func (s *ProjectService) Logs(ctx context.Context, id, userID string) (string, error) {
-	project, err := s.repo.FindByID(ctx, id, userID)
-	if err != nil {
-		return "", domain.ErrInternal("failed to get project", err)
-	}
+	project, _ := s.repo.FindByID(ctx, id, userID)
 	if project == nil || project.ContainerID == nil {
-		return "", domain.ErrNotFound("project not found or no container")
+		return "", domain.ErrNotFound("project not found")
 	}
-
-	logs, err := s.container.Logs(ctx, *project.ContainerID, 100)
-	if err != nil {
-		return "", domain.ErrInternal("failed to get logs", err)
-	}
-	return logs, nil
+	return s.container.Logs(ctx, *project.ContainerID, 100)
 }
 
-// maskSecret masks a secret string for API responses.
 func maskSecret(s string) string {
-	if s == "" {
-		return ""
-	}
+	if s == "" { return "" }
 	return "******"
 }
 
-// formatValidationErrors converts validation errors to a readable string.
 func formatValidationErrors(err error) string {
-	if validationErrors, ok := err.(validator.ValidationErrors); ok {
-		messages := make([]string, 0, len(validationErrors))
-		for _, e := range validationErrors {
-			messages = append(messages, fmt.Sprintf("'%s' failed on '%s'", e.Field(), e.Tag()))
-		}
-		return fmt.Sprintf("validation failed: %s", strings.Join(messages, ", "))
-	}
 	return err.Error()
 }

@@ -141,6 +141,7 @@ func main() {
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
 		r.Get("/api/projects/{id}", projectHandler.GetByID)
+		r.Put("/api/projects/{id}", projectHandler.Update) // Added PUT
 		r.Post("/api/projects/{id}/control", projectHandler.Control)
 		r.Delete("/api/projects/{id}", projectHandler.Delete)
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)

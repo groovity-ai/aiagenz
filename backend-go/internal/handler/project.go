@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/aiagenz/backend/internal/contextkeys"
 	"github.com/aiagenz/backend/internal/domain"
 	"github.com/aiagenz/backend/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -21,7 +22,7 @@ func NewProjectHandler(svc *service.ProjectService) *ProjectHandler {
 
 // Create handles POST /api/projects.
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 
 	var req domain.CreateProjectRequest
 	if err := DecodeJSON(r, &req); err != nil {
@@ -41,10 +42,33 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Update handles PUT /api/projects/{id}.
+func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	var req domain.UpdateProjectRequest
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+
+	project, err := h.svc.Update(r.Context(), id, userID, &req)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"project": project,
+	})
+}
+
 // List handles GET /api/projects.
 // Supports ?page=1&limit=10 query params for pagination.
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 
 	projects, err := h.svc.List(r.Context(), userID)
 	if err != nil {
@@ -88,7 +112,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // GetByID handles GET /api/projects/{id}.
 func (h *ProjectHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
 	project, err := h.svc.GetByID(r.Context(), id, userID)
@@ -102,7 +126,7 @@ func (h *ProjectHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 
 // Control handles POST /api/projects/{id}/control.
 func (h *ProjectHandler) Control(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
 	var action domain.ControlAction
@@ -121,7 +145,7 @@ func (h *ProjectHandler) Control(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/projects/{id}.
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.Delete(r.Context(), id, userID); err != nil {
@@ -134,7 +158,7 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Logs handles GET /api/projects/{id}/logs.
 func (h *ProjectHandler) Logs(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
 	logs, err := h.svc.Logs(r.Context(), id, userID)
@@ -150,7 +174,7 @@ func (h *ProjectHandler) Logs(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRepo handles PATCH /api/projects/{id}/repo.
 func (h *ProjectHandler) UpdateRepo(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(string)
+	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
 	var req struct {

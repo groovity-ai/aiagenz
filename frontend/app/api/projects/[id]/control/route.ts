@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
+const BACKEND_BASE = 'http://localhost:4001/api/projects';
 
 async function getToken() {
     const cookieStore = await cookies();
@@ -14,14 +14,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     try {
-        const { action } = await request.json();
-        const res = await fetch(`${BACKEND_BASE}/${id}/control`, {
+        const { action } = await request.json(); 
+        const res = await fetch(`${BACKEND_BASE}/${id}/${action}`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ action }),
+            headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();
         return NextResponse.json(data, { status: res.status });

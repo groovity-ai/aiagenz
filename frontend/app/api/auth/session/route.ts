@@ -5,7 +5,7 @@ export async function POST(request: Request) {
   
   const response = NextResponse.json({ success: true })
   response.cookies.set('token', token, { 
-    httpOnly: true, 
+    httpOnly: false, // Allow client JS (WebSocket) to read token
     path: '/',
     maxAge: 60 * 60 * 24 * 7 // 7 days
   })

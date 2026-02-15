@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
+const BACKEND_BASE = 'http://localhost:4001/api/projects';
 
 async function getToken() {
     const cookieStore = await cookies();
