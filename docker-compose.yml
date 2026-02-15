@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # ─── Backend (Go API) ──────────────────────────────────────
   backend:
@@ -62,6 +60,7 @@ services:
 
 volumes:
   aiagenz-data:
+
 
 networks:
   aiagenz-network:
