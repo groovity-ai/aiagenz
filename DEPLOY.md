@@ -102,19 +102,42 @@ curl -I http://localhost/health
 
 ---
 
-## Step 3.5: SSL (Certbot)
+## Step 3: Setup External Nginx (Docker)
 
-If you want to use **Full (Strict)** SSL in Cloudflare or access directly via HTTPS without Cloudflare:
+We will run Nginx in a **separate** Docker container (as registered in `docker-compose.nginx.yml`).
 
 ```bash
-# Install Certbot
-sudo apt install certbot python3-certbot-nginx
-
-# Generate Certificate (Automatically configures Nginx)
-sudo certbot --nginx -d aiagenz.cloud -d www.aiagenz.cloud
+# Start Nginx
+docker compose -f docker-compose.nginx.yml up -d
 ```
 
-> Certbot will automatically start a scheduler to renew certs.
+Verify it's running:
+```bash
+curl -I http://localhost
+# Should return 200 OK (proxied to your app)
+```
+
+---
+
+## Step 4: SSL (Certbot in Docker)
+
+Generate SSL certificates using the `certbot` container:
+
+```bash
+# Request certificate
+docker compose -f docker-compose.nginx.yml run --rm certbot certonly --webroot --webroot-path /var/www/certbot -d aiagenz.cloud -d www.aiagenz.cloud
+```
+
+After success, **edit** `nginx/aiagenz.cloud.conf` to uncomment SSL lines (if you have them) or just reload Nginx to pick up changes (Nginx config might need updates to point to new certs).
+
+**Reload Nginx:**
+```bash
+docker compose -f docker-compose.nginx.yml exec nginx nginx -s reload
+```
+
+---
+
+## Step 5: Cloudflare DNS
 
 ---
 
