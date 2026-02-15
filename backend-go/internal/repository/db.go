@@ -115,5 +115,20 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("failed to create updated_at trigger: %w", err)
 	}
 
+	// Add Metrics table
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS metrics (
+			id SERIAL PRIMARY KEY,
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			cpu_percent REAL NOT NULL,
+			memory_percent REAL NOT NULL,
+			memory_usage_mb REAL NOT NULL,
+			timestamp TIMESTAMPTZ DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_metrics_project_timestamp ON metrics(project_id, timestamp);
+	`); err != nil {
+		return fmt.Errorf("failed to run metrics migrations: %w", err)
+	}
+
 	return nil
 }

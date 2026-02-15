@@ -8,8 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArrowLeft, Play, Square, RotateCw, Terminal, Trash2 } from "lucide-react"
-import Console from "@/components/Console"
+import dynamic from "next/dynamic"
 import { SettingsDialog } from "@/components/SettingsDialog"
+
+const Console = dynamic(() => import("@/components/Console"), {
+  ssr: false,
+  loading: () => <div className="h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500">Loading Terminal...</div>
+})
 
 export default function ProjectDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)

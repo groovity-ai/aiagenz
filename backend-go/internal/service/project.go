@@ -192,8 +192,13 @@ func (s *ProjectService) buildEnvVars(projectID, telegramToken, apiKey, provider
 		"OPENCLAW_GATEWAY_AUTH_MODE=token",
 		"OPENCLAW_GATEWAY_BIND=auto",
 		"OPENCLAW_GATEWAY_PORT=18789",
-		"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=true",
-		fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", telegramToken),
+	}
+
+	if telegramToken != "" {
+		env = append(env,
+			"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=true",
+			fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", telegramToken),
+		)
 	}
 
 	if provider == "" { provider = "google" }

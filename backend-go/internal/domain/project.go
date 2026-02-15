@@ -59,7 +59,7 @@ type CreateProjectRequest struct {
 	Name          string `json:"name" validate:"required,min=1,max=100"`
 	Type          string `json:"type" validate:"required,oneof=starter custom marketplace"`
 	Plan          string `json:"plan" validate:"required,oneof=starter pro business"`
-	TelegramToken string `json:"telegramToken" validate:"required"`
+	TelegramToken string `json:"telegramToken"`
 	APIKey        string `json:"apiKey"`
 	Provider      string `json:"provider" validate:"omitempty,oneof=google openai anthropic google-antigravity"`
 	Model         string `json:"model"`
