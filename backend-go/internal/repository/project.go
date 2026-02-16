@@ -97,6 +97,77 @@ func (r *ProjectRepository) UpdateRepo(ctx context.Context, id, repoURL, webhook
 	return nil
 }
 
+// Update updates general project details (name, config).
+func (r *ProjectRepository) Update(ctx context.Context, p *domain.Project) error {
+	query := `UPDATE projects SET name = $1, config = $2 WHERE id = $3`
+	
+	var configStr *string
+	if p.Config != nil {
+		s := string(p.Config)
+		configStr = &s
+	}
+
+	_, err := r.db.Exec(ctx, query, p.Name, configStr, p.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update project: %w", err)
+	}
+	return nil
+}
+
+// List returns paginated projects for a user.
+func (r *ProjectRepository) List(ctx context.Context, userID string, page, limit int) ([]*domain.Project, int64, error) {
+	offset := (page - 1) * limit
+
+	// Get total count
+	var total int64
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM projects WHERE user_id = $1", userID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count projects: %w", err)
+	}
+
+	// Get data
+	query := `
+		SELECT id, user_id, name, type, plan, status, container_id, container_name, repo_url, webhook_secret, config, created_at
+		FROM projects WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`
+	rows, err := r.db.Query(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query projects: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []*domain.Project
+	for rows.Next() {
+		p, err := r.scanRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		projects = append(projects, p)
+	}
+
+	if projects == nil {
+		projects = []*domain.Project{}
+	}
+	return projects, total, nil
+}
+
+// Update updates general project details (name, config).
+func (r *ProjectRepository) Update(ctx context.Context, p *domain.Project) error {
+	query := `UPDATE projects SET name = $1, config = $2 WHERE id = $3`
+	
+	var configStr *string
+	if p.Config != nil {
+		s := string(p.Config)
+		configStr = &s
+	}
+
+	_, err := r.db.Exec(ctx, query, p.Name, configStr, p.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update project: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a project from the database.
 func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM projects WHERE id = $1`

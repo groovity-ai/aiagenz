@@ -52,8 +52,8 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		image = "sahabatcuan:latest"
 	}
 
-	// Build env vars for the container (ENV Config Mode - Patched)
-	env := s.buildEnvVars(projectID, req.TelegramToken, req.APIKey, req.Provider, req.Model)
+	// Build env vars for the container (Clean Start - No Auto Provisioning)
+	env := s.buildEnvVars(projectID)
 
 	// Encrypt config before storing
 	configJSON, _ := json.Marshal(domain.ProjectConfig{
@@ -129,28 +129,15 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	}
 
 	// Update values if provided
-	needsRedeploy := false
 	if req.Name != "" {
 		project.Name = req.Name
 	}
-	if req.TelegramToken != "" && req.TelegramToken != currentConfig.TelegramToken {
-		currentConfig.TelegramToken = req.TelegramToken
-		needsRedeploy = true
-	}
-	if req.APIKey != "" && req.APIKey != currentConfig.APIKey {
-		currentConfig.APIKey = req.APIKey
-		needsRedeploy = true
-	}
-	if req.Provider != "" && req.Provider != currentConfig.Provider {
-		currentConfig.Provider = req.Provider
-		needsRedeploy = true
-	}
-	if req.Model != "" && req.Model != currentConfig.Model {
-		currentConfig.Model = req.Model
-		needsRedeploy = true
-	}
+	if req.TelegramToken != "" { currentConfig.TelegramToken = req.TelegramToken }
+	if req.APIKey != "" { currentConfig.APIKey = req.APIKey }
+	if req.Provider != "" { currentConfig.Provider = req.Provider }
+	if req.Model != "" { currentConfig.Model = req.Model }
 
-	// Re-encrypt config
+	// Encrypt updated config
 	configJSON, _ := json.Marshal(currentConfig)
 	encryptedConfig, err := s.enc.Encrypt(configJSON)
 	if err != nil {
@@ -158,92 +145,26 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	}
 	project.Config = []byte(encryptedConfig)
 
-	// Redeploy Container if config changed
-	if needsRedeploy && project.ContainerID != nil {
-		_ = s.container.Remove(ctx, *project.ContainerID)
-
-		image := "openclaw-starter:latest"
-		if strings.Contains(strings.ToLower(project.Name), "sahabatcuan") || project.Type == "marketplace" {
-			image = "sahabatcuan:latest"
-		}
-
-		env := s.buildEnvVars(project.ID, currentConfig.TelegramToken, currentConfig.APIKey, currentConfig.Provider, currentConfig.Model)
-		plan := domain.GetPlan(project.Plan)
-		resources := ContainerResources{MemoryMB: 2048, CPU: plan.CPU}
-
-		newContainerID, err := s.container.Create(ctx, *project.ContainerName, image, env, resources)
-		if err != nil {
-			return nil, domain.ErrInternal("failed to recreate container", err)
-		}
-		
-		if err := s.container.Start(ctx, newContainerID); err != nil {
-			return nil, domain.ErrInternal("failed to start new container", err)
-		}
-		
-		project.ContainerID = &newContainerID
-		_ = s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
+	// Save to DB
+	if err := s.repo.Update(ctx, project); err != nil {
+		return nil, domain.ErrInternal("failed to update project", err)
 	}
 
 	return project, nil
 }
 
-func (s *ProjectService) buildEnvVars(projectID, telegramToken, apiKey, provider, model string) []string {
-	env := []string{
-		fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", projectID),
-		"OPENCLAW_GATEWAY_AUTH_MODE=token",
-		"OPENCLAW_GATEWAY_BIND=auto",
-		"OPENCLAW_GATEWAY_PORT=18789",
-	}
-
-	if telegramToken != "" {
-		env = append(env,
-			"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=true",
-			fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", telegramToken),
-		)
-	} else {
-		// Explicitly disable Telegram if no token provided (override image defaults)
-		env = append(env, 
-			"OPENCLAW_CHANNELS_TELEGRAM_ENABLED=false",
-			"OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=", // Clear any default token
-		)
-	}
-
-	if provider == "" { provider = "google" }
-	if model == "" { model = "google/gemini-3-flash-preview" }
-
-	// Ensure model has prefix
-	if !strings.Contains(model, "/") {
-		model = fmt.Sprintf("%s/%s", provider, model)
-	}
-
-	if provider == "google-antigravity" {
-		env = append(env, "OPENCLAW_ANTIGRAVITY_EMAIL=mozitop99@gmail.com")
-	} else if apiKey != "" {
-		// Inject Auth Profiles as JSON (More reliable than flattened env vars)
-		authJSON := fmt.Sprintf(`{"profiles":{"%s:default":{"type":"api_key","provider":"%s","key":"%s"}},"lastGood":{"%s":"%s:default"}}`, 
-			provider, provider, apiKey, provider, provider)
-		env = append(env, fmt.Sprintf("OPENCLAW_AUTH_PROFILES=%s", authJSON))
-	}
-
-	env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY=%s", model))
-	
-	// Brute force backup
-	env = append(env, fmt.Sprintf("OPENCLAW_MODEL=%s", model))
-
-	return env
-}
-
-// List returns all projects for a user.
-func (s *ProjectService) List(ctx context.Context, userID string) ([]*domain.ProjectResponse, error) {
-	projects, err := s.repo.FindAllByUser(ctx, userID)
+// List returns projects for a user with pagination.
+func (s *ProjectService) List(ctx context.Context, userID string, page, limit int) ([]*domain.ProjectResponse, int64, error) {
+	projects, total, err := s.repo.List(ctx, userID, page, limit)
 	if err != nil {
-		return nil, domain.ErrInternal("failed to list projects", err)
+		return nil, 0, domain.ErrInternal("failed to list projects", err)
 	}
 
 	responses := make([]*domain.ProjectResponse, len(projects))
 	for i, p := range projects {
 		status := p.Status
 		if p.ContainerID != nil {
+			// Check real status from Docker
 			info, _ := s.container.Inspect(ctx, *p.ContainerID)
 			if info != nil {
 				status = info.Status
@@ -262,7 +183,7 @@ func (s *ProjectService) List(ctx context.Context, userID string) ([]*domain.Pro
 		}
 	}
 
-	return responses, nil
+	return responses, total, nil
 }
 
 // GetByID returns a project with masked config.
@@ -345,7 +266,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 		return nil, domain.ErrNotFound("project not found or container not running")
 	}
 
-	// Read config file
+	// Read config file (use /home/node/ not /root for consistency with running user)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
 	if err != nil {
 		return nil, domain.ErrInternal("failed to read config from container", err)
@@ -358,8 +279,8 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 	}
 
 	// --- MERGE AUTH PROFILES & STATS FROM AGENT STORE ---
-	// Path: /home/node/.openclaw/agents/main/auth-profiles.json
-	storeOutput, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/agents/main/auth-profiles.json"})
+	// Path: /home/node/.openclaw/agents/main/agent/auth-profiles.json
+	storeOutput, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/agents/main/agent/auth-profiles.json"})
 	if err == nil {
 		var store map[string]interface{}
 		if json.Unmarshal([]byte(storeOutput), &store) == nil {
@@ -419,14 +340,15 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	authStoreBytes, _ := json.MarshalIndent(authStore, "  ", "  ")
 	authBase64 := base64.StdEncoding.EncodeToString(authStoreBytes)
 
-	// Combine commands: Create dir, write main config, write auth store
-	cmd := []string{"sh", "-c", fmt.Sprintf(
+	// Combine commands: Create dir, write main config, write auth store, FIX PERMISSIONS
+	script := fmt.Sprintf(
 		"mkdir -p /home/node/.openclaw/agents/main/agent && "+
 			"echo '%s' | base64 -d > /home/node/.openclaw/openclaw.json && "+
-			"echo '%s' | base64 -d > /home/node/.openclaw/agents/main/auth-profiles.json && "+
-			"cp /home/node/.openclaw/agents/main/auth-profiles.json /home/node/.openclaw/agents/main/agent/auth-profiles.json",
-		systemBase64, authBase64,
-	)}
+			"echo '%s' | base64 -d > /home/node/.openclaw/agents/main/agent/auth-profiles.json && "+
+			"chown -R node:node /home/node/.openclaw",
+		systemBase64, authBase64)
+
+	cmd := []string{"sh", "-c", script}
 
 	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, cmd); err != nil {
 		return domain.ErrInternal("failed to write configuration to container", err)
@@ -468,29 +390,84 @@ func (s *ProjectService) GetAvailableModels(ctx context.Context, id, userID stri
 	return result.Models, nil
 }
 
+// RunOpenClawCommand executes an arbitrary openclaw cli command safely.
+func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID string, args []string) (interface{}, error) {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil || project == nil || project.ContainerID == nil {
+		return nil, domain.ErrNotFound("project not found or container not running")
+	}
+
+	// Whitelist allowed subcommands for security
+	allowed := map[string]bool{
+		"models": true,
+		"agents": true,
+		"session": true,
+		"sessions": true,
+		"config": true,
+		"status": true,
+		"auth": true, // Enabled for auth add/login
+		"help": true,
+		"version": true,
+		"skills": true, // Enabled for skill install
+		"cron": true,   // Enabled for cron jobs
+	}
+	if len(args) == 0 || !allowed[args[0]] {
+		return nil, domain.ErrBadRequest("command not allowed or empty")
+	}
+
+	// Prepend "openclaw"
+	fullCmd := append([]string{"openclaw"}, args...)
+
+	output, err := s.container.ExecCommand(ctx, *project.ContainerID, fullCmd)
+	if err != nil {
+		return nil, domain.ErrInternal("command failed", err)
+	}
+
+	// Try to parse as JSON if it looks like one
+	output = strings.TrimSpace(output)
+	if strings.HasPrefix(output, "{") || strings.HasPrefix(output, "[") {
+		var jsonResult interface{}
+		if json.Unmarshal([]byte(output), &jsonResult) == nil {
+			return jsonResult, nil
+		}
+	}
+
+	// Return as raw string
+	return output, nil
+}
+
+// UpdateRepo updates the git repo linked to the project (placeholder)
 func (s *ProjectService) UpdateRepo(ctx context.Context, id, userID, repoURL, webhookSecret string) error {
 	return s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret)
 }
 
+// Delete removes a project.
 func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 	project, _ := s.repo.FindByID(ctx, id, userID)
 	if project != nil && project.ContainerID != nil {
 		_ = s.container.Remove(ctx, *project.ContainerID)
 	}
-	return s.repo.Delete(ctx, id)
+	return s.repo.Delete(ctx, id, userID)
 }
 
-func (s *ProjectService) Logs(ctx context.Context, id, userID string) (string, error) {
-	project, _ := s.repo.FindByID(ctx, id, userID)
-	if project == nil || project.ContainerID == nil {
-		return "", domain.ErrNotFound("project not found")
+// buildEnvVars constructs the environment variables for the container.
+// We stripped out auto-provisioning logic to ensure a clean start.
+// User must configure Agent/Channels via GUI/CLI.
+func (s *ProjectService) buildEnvVars(projectID string) []string {
+	return []string{
+		"NODE_ENV=production",
+		"OPENCLAW_GATEWAY_PORT=18789",
+		"OPENCLAW_GATEWAY_AUTH_MODE=token",
+		"OPENCLAW_GATEWAY_TOKEN=" + projectID,
+		"OPENCLAW_GATEWAY_BIND=auto", // Fix gVisor networking
 	}
-	return s.container.Logs(ctx, *project.ContainerID, 100)
 }
 
 func maskSecret(s string) string {
-	if s == "" { return "" }
-	return "******"
+	if len(s) < 8 {
+		return "********"
+	}
+	return s[:4] + "..." + s[len(s)-4:]
 }
 
 func formatValidationErrors(err error) string {
