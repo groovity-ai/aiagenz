@@ -509,6 +509,12 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
         key,
         ...val
     }))
+
+    // Default model state
+    const [defaultModel, setDefaultModel] = useState(config.agents?.defaults?.model?.primary || "")
+    const [savingDefault, setSavingDefault] = useState(false)
+
+    // Provider management state
     const [newProvider, setNewProvider] = useState({ provider: "openai", api_key: "" })
     const [saving, setSaving] = useState(false)
     const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set())
@@ -525,9 +531,45 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
         return null
     }).filter(Boolean) as string[]
 
-    // Always include common providers + any detected from models
     const commonProviders = ['openai', 'anthropic', 'google', 'google-antigravity', 'openrouter', 'deepseek', 'mistral', 'groq', 'together', 'fireworks']
     const knownProviders: string[] = Array.from(new Set([...commonProviders, ...derivedProviders])).sort()
+
+    // Available models for dropdown (sort by provider then name)
+    const modelOptions = [...availableModels].sort((a, b) => {
+        const pA = a.provider || "", pB = b.provider || ""
+        if (pA !== pB) return pA.localeCompare(pB)
+        return (a.id || "").localeCompare(b.id || "")
+    })
+
+    useEffect(() => {
+        setDefaultModel(config.agents?.defaults?.model?.primary || "")
+    }, [config])
+
+    const handleSaveDefault = async () => {
+        if (!defaultModel) return
+        setSavingDefault(true)
+        try {
+            // Create deep copy of config to modify
+            const newConfig = JSON.parse(JSON.stringify(config))
+            if (!newConfig.agents) newConfig.agents = {}
+            if (!newConfig.agents.defaults) newConfig.agents.defaults = {}
+            if (!newConfig.agents.defaults.model) newConfig.agents.defaults.model = {}
+
+            newConfig.agents.defaults.model.primary = defaultModel
+
+            await apiFetch(`/api/projects/${projectId}/config`, {
+                method: 'PUT',
+                body: JSON.stringify(newConfig)
+            })
+
+            showToast("Default model updated!")
+            onUpdate() // Refresh config
+        } catch (e) {
+            showToast("Failed to update default model", "error")
+        } finally {
+            setSavingDefault(false)
+        }
+    }
 
     const handleSaveAuth = async () => {
         if (!newProvider.provider) {
@@ -667,6 +709,46 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
 
     return (
         <div className="space-y-6">
+            {/* Default Model Selector */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <CardTitle>Default Model</CardTitle>
+                    <CardDescription>Select the primary model for your agent. Ensure the provider is configured below.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex gap-2">
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            value={defaultModel}
+                            onChange={(e) => setDefaultModel(e.target.value)}
+                        >
+                            <option value="">Select a model...</option>
+                            {modelOptions.length > 0 ? (
+                                modelOptions.map(m => (
+                                    <option key={m.id || m.key} value={m.id || m.key}>
+                                        {m.id || m.key} {m.provider ? `(${m.provider})` : ''}
+                                    </option>
+                                ))
+                            ) : (
+                                // Fallback if no models are detected yet
+                                knownProviders.map(p => (
+                                    <option key={p} value={p}>{p} (auto-detect)</option>
+                                ))
+                            )}
+                        </select>
+                        <Button onClick={handleSaveDefault} disabled={savingDefault || defaultModel === (config.agents?.defaults?.model?.primary || "")}>
+                            {savingDefault ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                            Save
+                        </Button>
+                    </div>
+                    {modelOptions.length === 0 && (
+                        <p className="text-[11px] text-muted-foreground mt-2">
+                            Tip: Connect a provider below to see available models.
+                        </p>
+                    )}
+                </CardContent>
+            </Card>
+
             <Card className={editingKey ? "border-accent/50 bg-accent/5" : ""}>
                 <CardHeader>
                     <div className="flex justify-between items-center">
