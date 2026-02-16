@@ -137,12 +137,14 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) Logs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
-	// logs handled by svc (not implemented fully in snippet but assume it works)
-	// Actually we need to call container.Logs via project service
-	// For now keeping existing handler if present, or stub
-	// Assuming svc.Logs exists or similar
-	w.WriteHeader(http.StatusOK) 
-	// Real implementation would stream logs
+
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"status", "--json"})
+	if err != nil {
+		// Fallback: return basic container info
+		JSON(w, http.StatusOK, map[string]interface{}{"logs": "Container logs unavailable", "error": err.Error()})
+		return
+	}
+	JSON(w, http.StatusOK, result)
 }
 
 // UpdateRepo handles PATCH /api/projects/{id}/repo.
@@ -305,7 +307,7 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 	var req struct {
-		Type   string `json:"type"`   // e.g. "telegram"
+		Type   string                 `json:"type"`   // e.g. "telegram"
 		Config map[string]interface{} `json:"config"` // e.g. { "botToken": "..." }
 	}
 	if err := DecodeJSON(r, &req); err != nil {
@@ -341,6 +343,18 @@ func (h *ProjectHandler) AuthAdd(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
+	if req.Provider == "" {
+		Error(w, domain.ErrBadRequest("provider is required"))
+		return
+	}
+	if req.Key == "" {
+		Error(w, domain.ErrBadRequest("key is required"))
+		return
+	}
+	if len(req.Key) < 4 {
+		Error(w, domain.ErrBadRequest("key is too short"))
+		return
+	}
 	// openclaw auth add --provider <p> --key <k>
 	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"auth", "add", "--provider", req.Provider, "--key", req.Key})
 	if err != nil {
@@ -350,7 +364,7 @@ func (h *ProjectHandler) AuthAdd(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// AuthLogin handles POST /projects/{id}/auth/login (Start OAuth)
+// AuthLogin handles POST /projects/{id}/auth/login (Start OAuth - Step 1: Get URL)
 func (h *ProjectHandler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
@@ -361,13 +375,46 @@ func (h *ProjectHandler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	// openclaw auth login <p> --print-url
-	output, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"auth", "login", req.Provider, "--print-url"})
+	if req.Provider == "" {
+		Error(w, domain.ErrBadRequest("provider is required"))
+		return
+	}
+	// Step 1: Start OAuth and capture the authorization URL
+	output, err := h.svc.OAuthGetURL(r.Context(), id, userID, req.Provider)
 	if err != nil {
 		Error(w, err)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{"output": output})
+}
+
+// AuthCallback handles POST /projects/{id}/auth/callback (Complete OAuth - Step 2: Submit Callback)
+func (h *ProjectHandler) AuthCallback(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Provider    string `json:"provider"`
+		CallbackURL string `json:"callbackUrl"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+	if req.Provider == "" {
+		Error(w, domain.ErrBadRequest("provider is required"))
+		return
+	}
+	if req.CallbackURL == "" {
+		Error(w, domain.ErrBadRequest("callbackUrl is required"))
+		return
+	}
+	// Step 2: Submit callback URL to complete the OAuth flow
+	output, err := h.svc.OAuthSubmitCallback(r.Context(), id, userID, req.Provider, req.CallbackURL)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"success": true, "output": output})
 }
 
 // --- SKILLS MANAGEMENT ---
@@ -435,7 +482,6 @@ func (h *ProjectHandler) GetCron(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) AddCron(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
-	// For simplicity, we accept raw args or structured. Using args for max flexibility via wrapper.
 	var req struct {
 		Args []string `json:"args"`
 	}
@@ -443,7 +489,16 @@ func (h *ProjectHandler) AddCron(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	
+
+	// BUG-5 FIX: Validate individual args (RunOpenClawCommand also validates,
+	// but double-check here since we're prepending "cron")
+	for _, arg := range req.Args {
+		if len(arg) > 500 {
+			Error(w, domain.ErrBadRequest("argument too long"))
+			return
+		}
+	}
+
 	cmdArgs := append([]string{"cron"}, req.Args...)
 	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, cmdArgs)
 	if err != nil {
@@ -451,4 +506,238 @@ func (h *ProjectHandler) AddCron(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// --- DIAGNOSTICS ---
+
+// Doctor handles GET /projects/{id}/doctor
+func (h *ProjectHandler) Doctor(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"doctor", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// Health handles GET /projects/{id}/health
+func (h *ProjectHandler) Health(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"health", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// GetAgentLogs handles GET /projects/{id}/agent-logs
+func (h *ProjectHandler) GetAgentLogs(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	// Get optional tail param
+	tail := r.URL.Query().Get("tail")
+	args := []string{"logs", "--json"}
+	if tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, args)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// --- MESSAGING ---
+
+// SendMessage handles POST /projects/{id}/message/send
+func (h *ProjectHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	var req struct {
+		To      string `json:"to"`
+		Message string `json:"message"`
+		Channel string `json:"channel"` // optional: telegram, whatsapp, etc
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+	if req.To == "" || req.Message == "" {
+		Error(w, domain.ErrBadRequest("to and message are required"))
+		return
+	}
+	args := []string{"message", "send", "--to", req.To, "--message", req.Message}
+	if req.Channel != "" {
+		args = append(args, "--channel", req.Channel)
+	}
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, args)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"success": true, "output": result})
+}
+
+// --- PAIRING ---
+
+// ApprovePairing handles POST /projects/{id}/pairing/approve
+func (h *ProjectHandler) ApprovePairing(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Channel string `json:"channel"`
+		Code    string `json:"code"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+	if req.Channel == "" || req.Code == "" {
+		Error(w, domain.ErrBadRequest("channel and code are required"))
+		return
+	}
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"pairing", "approve", req.Channel, req.Code})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"success": true, "output": result})
+}
+
+// --- MEMORY ---
+
+// GetMemory handles GET /projects/{id}/memory
+func (h *ProjectHandler) GetMemory(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"memory", "list", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// ClearMemory handles DELETE /projects/{id}/memory
+func (h *ProjectHandler) ClearMemory(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"memory", "clear", "--confirm"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// --- HOOKS ---
+
+// GetHooks handles GET /projects/{id}/hooks
+func (h *ProjectHandler) GetHooks(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"hooks", "list", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// AddHook handles POST /projects/{id}/hooks
+func (h *ProjectHandler) AddHook(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Args []string `json:"args"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+	cmdArgs := append([]string{"hooks", "add"}, req.Args...)
+	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, cmdArgs)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// RemoveHook handles DELETE /projects/{id}/hooks/{name}
+func (h *ProjectHandler) RemoveHook(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	hookName := chi.URLParam(r, "name")
+	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"hooks", "remove", hookName})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// --- PLUGINS ---
+
+// GetPlugins handles GET /projects/{id}/plugins
+func (h *ProjectHandler) GetPlugins(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"plugins", "list", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
+}
+
+// InstallPlugin handles POST /projects/{id}/plugins
+func (h *ProjectHandler) InstallPlugin(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		Error(w, err)
+		return
+	}
+	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"plugins", "install", req.Name})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// UninstallPlugin handles DELETE /projects/{id}/plugins/{name}
+func (h *ProjectHandler) UninstallPlugin(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	pluginName := chi.URLParam(r, "name")
+	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"plugins", "remove", pluginName})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// --- SECURITY ---
+
+// GetSecurity handles GET /projects/{id}/security
+func (h *ProjectHandler) GetSecurity(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"security", "list", "--json"})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, result)
 }

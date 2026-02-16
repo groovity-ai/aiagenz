@@ -9,6 +9,18 @@ interface AdvancedConfigTabProps {
   projectId: string
 }
 
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  const toast = document.createElement('div')
+  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`
+  toast.textContent = message
+  document.body.appendChild(toast)
+  setTimeout(() => {
+    toast.style.opacity = '0'
+    toast.style.transform = 'translateY(-10px)'
+    setTimeout(() => toast.remove(), 300)
+  }, 3000)
+}
+
 export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
   const [configJson, setConfigJson] = useState("")
   const [loading, setLoading] = useState(false)
@@ -27,7 +39,7 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
         setConfigJson(JSON.stringify(data, null, 2))
       }
     } catch (e) {
-        console.error(e)
+      console.error(e)
     }
     setLoading(false)
   }
@@ -37,11 +49,11 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
     try {
       let parsed
       try {
-          parsed = JSON.parse(configJson)
+        parsed = JSON.parse(configJson)
       } catch (e) {
-          alert("Invalid JSON")
-          setSaving(false)
-          return
+        showToast("Invalid JSON — please fix syntax errors", "error")
+        setSaving(false)
+        return
       }
 
       const res = await fetch(`/api/projects/${projectId}/config`, {
@@ -50,13 +62,13 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
         body: JSON.stringify(parsed),
       })
       if (res.ok) {
-        alert("Configuration saved & Agent restarted!")
+        showToast("Configuration saved & Agent restarted!")
         fetchConfig()
       } else {
-        alert("Failed to save config")
+        showToast("Failed to save config", "error")
       }
     } catch (error) {
-      alert("Error saving configuration")
+      showToast("Error saving configuration", "error")
     } finally {
       setSaving(false)
     }
@@ -68,11 +80,11 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
         <CardHeader>
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-                <FileJson className="h-5 w-5 text-accent"/>
-                <div>
-                    <CardTitle>Advanced Configuration</CardTitle>
-                    <CardDescription>Directly edit openclaw.json and auth-profiles.json (merged view).</CardDescription>
-                </div>
+              <FileJson className="h-5 w-5 text-accent" />
+              <div>
+                <CardTitle>Advanced Configuration</CardTitle>
+                <CardDescription>Directly edit openclaw.json and auth-profiles.json (merged view).</CardDescription>
+              </div>
             </div>
             <Button onClick={handleSave} disabled={saving || loading}>
               {saving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -81,16 +93,16 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
           </div>
         </CardHeader>
         <CardContent>
-            {loading ? (
-                <div className="p-8 text-center text-muted-foreground">Loading config...</div>
-            ) : (
-                <textarea 
-                    className="flex min-h-[500px] w-full rounded-md border border-input bg-black/50 px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    value={configJson}
-                    onChange={(e) => setConfigJson(e.target.value)}
-                    spellCheck={false}
-                />
-            )}
+          {loading ? (
+            <div className="p-8 text-center text-muted-foreground">Loading config...</div>
+          ) : (
+            <textarea
+              className="flex min-h-[500px] w-full rounded-md border border-input bg-black/50 px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              value={configJson}
+              onChange={(e) => setConfigJson(e.target.value)}
+              spellCheck={false}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

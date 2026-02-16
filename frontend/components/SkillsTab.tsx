@@ -11,6 +11,18 @@ interface SkillsTabProps {
   projectId: string
 }
 
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  const toast = document.createElement('div')
+  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`
+  toast.textContent = message
+  document.body.appendChild(toast)
+  setTimeout(() => {
+    toast.style.opacity = '0'
+    toast.style.transform = 'translateY(-10px)'
+    setTimeout(() => toast.remove(), 300)
+  }, 3000)
+}
+
 export function SkillsTab({ projectId }: SkillsTabProps) {
   const [skills, setSkills] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -30,7 +42,7 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
         const list = Array.isArray(data) ? data : (data.skills || [])
         setSkills(list)
       }
-    } catch (e) {}
+    } catch (e) { }
     setLoading(false)
   }
 
@@ -46,11 +58,12 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
       if (res.ok) {
         setNewSkill("")
         fetchSkills()
+        showToast(`Skill "${newSkill}" installed!`)
       } else {
-        alert("Failed to install skill")
+        showToast("Failed to install skill", "error")
       }
     } catch (e) {
-        alert("Error installing skill")
+      showToast("Error installing skill", "error")
     } finally {
       setInstalling(false)
     }
@@ -61,8 +74,9 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
     try {
       await fetch(`/api/projects/${projectId}/skills/${name}`, { method: "DELETE" })
       fetchSkills()
+      showToast(`Skill "${name}" uninstalled`)
     } catch (e) {
-        alert("Error uninstalling skill")
+      showToast("Error uninstalling skill", "error")
     }
   }
 
@@ -75,13 +89,14 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
         </CardHeader>
         <CardContent>
           <div className="flex gap-2">
-            <Input 
-              placeholder="Skill name (e.g. browser, fs, web-search)" 
+            <Input
+              placeholder="Skill name (e.g. browser, fs, web-search)"
               value={newSkill}
               onChange={(e) => setNewSkill(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleInstall()}
             />
             <Button onClick={handleInstall} disabled={installing}>
-              {installing ? <RefreshCw className="mr-2 h-4 w-4 animate-spin"/> : <Download className="mr-2 h-4 w-4"/>}
+              {installing ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
               Install
             </Button>
           </div>
@@ -94,27 +109,27 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2">
-                    <Box className="h-5 w-5 text-accent"/>
-                    <CardTitle className="text-base">{skill.name}</CardTitle>
+                  <Box className="h-5 w-5 text-accent" />
+                  <CardTitle className="text-base">{skill.name}</CardTitle>
                 </div>
                 <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => handleUninstall(skill.name)}>
-                    <Trash2 className="h-4 w-4"/>
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
               <CardDescription className="text-xs">{skill.description || "No description"}</CardDescription>
             </CardHeader>
             <CardContent>
-                <div className="flex flex-wrap gap-2">
-                    {skill.version && <Badge variant="secondary" className="text-[10px]">v{skill.version}</Badge>}
-                    {skill.enabled !== false && <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-200">Active</Badge>}
-                </div>
+              <div className="flex flex-wrap gap-2">
+                {skill.version && <Badge variant="secondary" className="text-[10px]">v{skill.version}</Badge>}
+                {skill.enabled !== false && <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-600 border-green-200">Active</Badge>}
+              </div>
             </CardContent>
           </Card>
         ))}
         {!loading && skills.length === 0 && (
-            <div className="col-span-full text-center p-8 border border-dashed rounded text-muted-foreground">
-                No skills installed.
-            </div>
+          <div className="col-span-full text-center p-8 border border-dashed rounded text-muted-foreground">
+            No skills installed.
+          </div>
         )}
       </div>
     </div>

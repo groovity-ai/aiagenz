@@ -100,7 +100,7 @@ func (r *ProjectRepository) UpdateRepo(ctx context.Context, id, repoURL, webhook
 // Update updates general project details (name, config).
 func (r *ProjectRepository) Update(ctx context.Context, p *domain.Project) error {
 	query := `UPDATE projects SET name = $1, config = $2 WHERE id = $3`
-	
+
 	var configStr *string
 	if p.Config != nil {
 		s := string(p.Config)
@@ -149,23 +149,6 @@ func (r *ProjectRepository) List(ctx context.Context, userID string, page, limit
 		projects = []*domain.Project{}
 	}
 	return projects, total, nil
-}
-
-// Update updates general project details (name, config).
-func (r *ProjectRepository) Update(ctx context.Context, p *domain.Project) error {
-	query := `UPDATE projects SET name = $1, config = $2 WHERE id = $3`
-	
-	var configStr *string
-	if p.Config != nil {
-		s := string(p.Config)
-		configStr = &s
-	}
-
-	_, err := r.db.Exec(ctx, query, p.Name, configStr, p.ID)
-	if err != nil {
-		return fmt.Errorf("failed to update project: %w", err)
-	}
-	return nil
 }
 
 // Delete removes a project from the database.

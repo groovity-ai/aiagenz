@@ -140,27 +140,58 @@ func main() {
 		// Projects
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
-		
+
 		// Specific routes BEFORE generic {id} route
 		r.Get("/api/projects/{id}/config", projectHandler.GetRuntimeConfig)
 		r.Put("/api/projects/{id}/config", projectHandler.UpdateRuntimeConfig)
 		r.Get("/api/projects/{id}/models", projectHandler.GetModels)
-		r.Post("/api/projects/{id}/command", projectHandler.HandleCommand) // Generic Gateway
-		
-		// Specific CLI Wrappers
-		r.Get("/api/projects/{id}/agent-status", projectHandler.GetAgentStatus)
-		r.Get("/api/projects/{id}/agents", projectHandler.GetAgentsList)
-		r.Get("/api/projects/{id}/sessions", projectHandler.GetSessionsList)
-		r.Post("/api/projects/{id}/auth/add", projectHandler.AuthAdd)
-		r.Post("/api/projects/{id}/auth/login", projectHandler.AuthLogin)
-		r.Get("/api/projects/{id}/channels", projectHandler.GetChannels)
-		r.Post("/api/projects/{id}/channels", projectHandler.AddChannel)
-		r.Get("/api/projects/{id}/skills", projectHandler.GetSkills)
-		r.Post("/api/projects/{id}/skills", projectHandler.InstallSkill)
-		r.Delete("/api/projects/{id}/skills/{name}", projectHandler.UninstallSkill)
-		r.Get("/api/projects/{id}/cron", projectHandler.GetCron)
-		r.Post("/api/projects/{id}/cron", projectHandler.AddCron)
-		
+
+		// Specific CLI Wrappers (with stricter rate limit — each spawns docker exec)
+		cliRL := appMiddleware.NewRateLimiter(5, 10) // 5 req/sec, burst 10
+		r.Group(func(r chi.Router) {
+			r.Use(cliRL.Middleware())
+			r.Post("/api/projects/{id}/command", projectHandler.HandleCommand) // Generic Gateway
+			r.Get("/api/projects/{id}/agent-status", projectHandler.GetAgentStatus)
+			r.Get("/api/projects/{id}/agents", projectHandler.GetAgentsList)
+			r.Get("/api/projects/{id}/sessions", projectHandler.GetSessionsList)
+			r.Post("/api/projects/{id}/auth/add", projectHandler.AuthAdd)
+			r.Post("/api/projects/{id}/auth/login", projectHandler.AuthLogin)
+			r.Post("/api/projects/{id}/auth/callback", projectHandler.AuthCallback)
+			r.Get("/api/projects/{id}/channels", projectHandler.GetChannels)
+			r.Post("/api/projects/{id}/channels", projectHandler.AddChannel)
+			r.Get("/api/projects/{id}/skills", projectHandler.GetSkills)
+			r.Post("/api/projects/{id}/skills", projectHandler.InstallSkill)
+			r.Delete("/api/projects/{id}/skills/{name}", projectHandler.UninstallSkill)
+			r.Get("/api/projects/{id}/cron", projectHandler.GetCron)
+			r.Post("/api/projects/{id}/cron", projectHandler.AddCron)
+
+			// Diagnostics
+			r.Get("/api/projects/{id}/doctor", projectHandler.Doctor)
+			r.Get("/api/projects/{id}/health", projectHandler.Health)
+			r.Get("/api/projects/{id}/agent-logs", projectHandler.GetAgentLogs)
+
+			// Messaging & Pairing
+			r.Post("/api/projects/{id}/message/send", projectHandler.SendMessage)
+			r.Post("/api/projects/{id}/pairing/approve", projectHandler.ApprovePairing)
+
+			// Memory
+			r.Get("/api/projects/{id}/memory", projectHandler.GetMemory)
+			r.Delete("/api/projects/{id}/memory", projectHandler.ClearMemory)
+
+			// Hooks
+			r.Get("/api/projects/{id}/hooks", projectHandler.GetHooks)
+			r.Post("/api/projects/{id}/hooks", projectHandler.AddHook)
+			r.Delete("/api/projects/{id}/hooks/{name}", projectHandler.RemoveHook)
+
+			// Plugins
+			r.Get("/api/projects/{id}/plugins", projectHandler.GetPlugins)
+			r.Post("/api/projects/{id}/plugins", projectHandler.InstallPlugin)
+			r.Delete("/api/projects/{id}/plugins/{name}", projectHandler.UninstallPlugin)
+
+			// Security
+			r.Get("/api/projects/{id}/security", projectHandler.GetSecurity)
+		})
+
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)
 		r.Get("/api/projects/{id}/stats", statsHandler.ContainerStats)
 		r.Get("/api/projects/{id}/metrics", statsHandler.GetProjectMetrics)

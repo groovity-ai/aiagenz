@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -192,18 +193,23 @@ func (s *ContainerService) ExecAttach(ctx context.Context, execID string) (*type
 }
 
 // ExecCommand runs a command inside a container and returns stdout/stderr.
+// Uses a 30-second timeout to prevent hanging processes from blocking HTTP requests.
 func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, cmd []string) (string, error) {
+	// IMP-1: Add timeout to prevent indefinite hangs
+	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	execConfig := container.ExecOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
-	respID, err := s.cli.ContainerExecCreate(ctx, containerID, execConfig)
+	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to create exec: %w", err)
 	}
 
-	resp, err := s.cli.ContainerExecAttach(ctx, respID.ID, container.ExecStartOptions{})
+	resp, err := s.cli.ContainerExecAttach(execCtx, respID.ID, container.ExecStartOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to attach to exec: %w", err)
 	}
@@ -215,9 +221,148 @@ func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, 
 		return "", fmt.Errorf("failed to read output: %w", err)
 	}
 
-	// If command failed (cat failed), return stderr
-	if stderr.Len() > 0 {
-		return "", fmt.Errorf("command failed: %s", stderr.String())
+	// BUG-2 FIX: Check exit code instead of treating all stderr as error.
+	// Many CLI tools write warnings/info to stderr even on success.
+	inspectResp, err := s.cli.ContainerExecInspect(execCtx, respID.ID)
+	if err != nil {
+		// Fallback: if we can't inspect, use stderr as indicator
+		if stderr.Len() > 0 && stdout.Len() == 0 {
+			return "", fmt.Errorf("command failed: %s", stderr.String())
+		}
+		return stdout.String(), nil
+	}
+
+	if inspectResp.ExitCode != 0 {
+		errMsg := stderr.String()
+		if errMsg == "" {
+			errMsg = stdout.String()
+		}
+		return "", fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, errMsg)
+	}
+
+	return stdout.String(), nil
+}
+
+// ExecCommandWithStdin runs a command inside a container and pipes stdinData to its stdin.
+// Used for writing files safely without shell interpolation.
+func (s *ContainerService) ExecCommandWithStdin(ctx context.Context, containerID string, cmd []string, stdinData string) error {
+	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	resp, err := s.cli.ContainerExecAttach(execCtx, respID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Write stdin data
+	if _, err := io.WriteString(resp.Conn, stdinData); err != nil {
+		return fmt.Errorf("failed to write stdin: %w", err)
+	}
+	// Close write side to signal EOF
+	resp.CloseWrite()
+
+	// Drain output
+	var stdout, stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+
+	// Check exit code
+	inspectResp, err := s.cli.ContainerExecInspect(execCtx, respID.ID)
+	if err == nil && inspectResp.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, stderr.String())
+	}
+
+	return nil
+}
+
+// ExecCommandWithTimeout runs a command with a custom timeout.
+// Returns whatever stdout was captured, even if the command times out.
+// Useful for interactive CLI commands that print output then block waiting for input.
+func (s *ContainerService) ExecCommandWithTimeout(ctx context.Context, containerID string, cmd []string, timeout time.Duration) (string, error) {
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	resp, err := s.cli.ContainerExecAttach(execCtx, respID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Read output — will return partial output if context times out
+	var stdout, stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+
+	// If we got some stdout, return it even on timeout
+	output := stdout.String()
+	if output == "" && stderr.Len() > 0 {
+		output = stderr.String()
+	}
+
+	return output, nil
+}
+
+// ExecCommandWithStdinAndOutput runs a command, pipes stdinData to its stdin, and returns stdout.
+// Used for completing interactive flows (e.g., OAuth callback submission).
+func (s *ContainerService) ExecCommandWithStdinAndOutput(ctx context.Context, containerID string, cmd []string, stdinData string) (string, error) {
+	execCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	resp, err := s.cli.ContainerExecAttach(execCtx, respID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Write stdin data
+	if _, err := io.WriteString(resp.Conn, stdinData+"\n"); err != nil {
+		return "", fmt.Errorf("failed to write stdin: %w", err)
+	}
+	resp.CloseWrite()
+
+	// Read output
+	var stdout, stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+
+	// Check exit code
+	inspectResp, err := s.cli.ContainerExecInspect(execCtx, respID.ID)
+	if err == nil && inspectResp.ExitCode != 0 {
+		errMsg := stderr.String()
+		if errMsg == "" {
+			errMsg = stdout.String()
+		}
+		return "", fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, errMsg)
 	}
 
 	return stdout.String(), nil

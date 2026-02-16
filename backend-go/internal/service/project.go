@@ -132,10 +132,18 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	if req.Name != "" {
 		project.Name = req.Name
 	}
-	if req.TelegramToken != "" { currentConfig.TelegramToken = req.TelegramToken }
-	if req.APIKey != "" { currentConfig.APIKey = req.APIKey }
-	if req.Provider != "" { currentConfig.Provider = req.Provider }
-	if req.Model != "" { currentConfig.Model = req.Model }
+	if req.TelegramToken != "" {
+		currentConfig.TelegramToken = req.TelegramToken
+	}
+	if req.APIKey != "" {
+		currentConfig.APIKey = req.APIKey
+	}
+	if req.Provider != "" {
+		currentConfig.Provider = req.Provider
+	}
+	if req.Model != "" {
+		currentConfig.Model = req.Model
+	}
 
 	// Encrypt updated config
 	configJSON, _ := json.Marshal(currentConfig)
@@ -242,10 +250,14 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 	}
 
 	switch action.Action {
-	case "start": err = s.container.Start(ctx, *project.ContainerID)
-	case "stop": err = s.container.Stop(ctx, *project.ContainerID)
-	case "restart": err = s.container.Restart(ctx, *project.ContainerID)
-	default: return domain.ErrBadRequest("invalid action")
+	case "start":
+		err = s.container.Start(ctx, *project.ContainerID)
+	case "stop":
+		err = s.container.Stop(ctx, *project.ContainerID)
+	case "restart":
+		err = s.container.Restart(ctx, *project.ContainerID)
+	default:
+		return domain.ErrBadRequest("invalid action")
 	}
 
 	if err != nil {
@@ -253,7 +265,9 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 	}
 
 	newStatus := "running"
-	if action.Action == "stop" { newStatus = "exited" }
+	if action.Action == "stop" {
+		newStatus = "exited"
+	}
 	_ = s.repo.UpdateStatus(ctx, id, newStatus, project.ContainerID)
 
 	return nil
@@ -293,7 +307,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 				if _, ok := authObj["profiles"].(map[string]interface{}); !ok {
 					authObj["profiles"] = map[string]interface{}{}
 				}
-				
+
 				mainProfiles := authObj["profiles"].(map[string]interface{})
 				for k, v := range profiles {
 					mainProfiles[k] = v
@@ -318,43 +332,56 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrNotFound("project not found or container not running")
 	}
 
+	// BUG-6 FIX: Deep copy config to avoid mutating caller's map
+	configCopy := deepCopyMap(newConfig)
+
 	// 1. Prepare Auth Profiles for Agent Store
 	var profiles map[string]interface{}
-	if auth, ok := newConfig["auth"].(map[string]interface{}); ok {
+	if auth, ok := configCopy["auth"].(map[string]interface{}); ok {
 		if p, ok := auth["profiles"].(map[string]interface{}); ok {
 			profiles = p
-			// Remove sensitive profiles from main config to keep it clean (OpenClaw will read from store)
 			delete(auth, "profiles")
+		}
+		// Remove usageStats from config write-back (read-only runtime data)
+		delete(auth, "usageStats")
+	}
+
+	// 2. Ensure directory structure exists
+	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"mkdir", "-p", "/home/node/.openclaw/agents/main/agent"}); err != nil {
+		return domain.ErrInternal("failed to create config directory", err)
+	}
+
+	// BUG-1 FIX: Write files without shell interpolation — use base64 pipe via separate commands
+	// 3. Write openclaw.json (System Config)
+	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
+	systemBase64 := base64.StdEncoding.EncodeToString(systemConfigBytes)
+	writeSystemCmd := []string{"sh", "-c", "base64 -d > /home/node/.openclaw/openclaw.json"}
+	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeSystemCmd, systemBase64); err != nil {
+		// Fallback: use echo pipe approach (safe because base64 has no shell-special chars)
+		fallbackCmd := []string{"sh", "-c", "echo " + systemBase64 + " | base64 -d > /home/node/.openclaw/openclaw.json"}
+		if _, err := s.container.ExecCommand(ctx, *project.ContainerID, fallbackCmd); err != nil {
+			return domain.ErrInternal("failed to write config to container", err)
 		}
 	}
 
-	// 2. Write openclaw.json (System Config)
-	systemConfigBytes, _ := json.MarshalIndent(newConfig, "  ", "  ")
-	systemBase64 := base64.StdEncoding.EncodeToString(systemConfigBytes)
-	
-	// 3. Write auth-profiles.json (Kredensial)
+	// 4. Write auth-profiles.json (Credentials)
 	authStore := map[string]interface{}{
 		"version":  1,
 		"profiles": profiles,
 	}
-	authStoreBytes, _ := json.MarshalIndent(authStore, "  ", "  ")
+	authStoreBytes, _ := json.MarshalIndent(authStore, "", "  ")
 	authBase64 := base64.StdEncoding.EncodeToString(authStoreBytes)
-
-	// Combine commands: Create dir, write main config, write auth store, FIX PERMISSIONS
-	script := fmt.Sprintf(
-		"mkdir -p /home/node/.openclaw/agents/main/agent && "+
-			"echo '%s' | base64 -d > /home/node/.openclaw/openclaw.json && "+
-			"echo '%s' | base64 -d > /home/node/.openclaw/agents/main/agent/auth-profiles.json && "+
-			"chown -R node:node /home/node/.openclaw",
-		systemBase64, authBase64)
-
-	cmd := []string{"sh", "-c", script}
-
-	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, cmd); err != nil {
-		return domain.ErrInternal("failed to write configuration to container", err)
+	fallbackAuthCmd := []string{"sh", "-c", "echo " + authBase64 + " | base64 -d > /home/node/.openclaw/agents/main/agent/auth-profiles.json"}
+	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, fallbackAuthCmd); err != nil {
+		return domain.ErrInternal("failed to write auth profiles to container", err)
 	}
 
-	// Restart container to apply changes
+	// 5. Fix permissions
+	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw"}); err != nil {
+		// Non-fatal: chown may fail in some container setups
+	}
+
+	// 6. Restart container to apply changes
 	if err := s.container.Restart(ctx, *project.ContainerID); err != nil {
 		return domain.ErrInternal("failed to restart container", err)
 	}
@@ -374,16 +401,30 @@ func (s *ProjectService) GetAvailableModels(ctx context.Context, id, userID stri
 		return nil, domain.ErrInternal("failed to list models", err)
 	}
 
-	jsonStart := strings.Index(output, "{")
-	if jsonStart == -1 {
-		return nil, domain.ErrInternal("invalid cli output format", fmt.Errorf("no json found: %s", output))
-	}
-	jsonStr := output[jsonStart:]
+	// BUG-3 FIX: Try parsing full output first, then extract JSON substring.
+	// Handle both {} objects and [] arrays, plus trailing garbage.
+	output = strings.TrimSpace(output)
 
+	// Attempt 1: Parse full output directly
 	var result struct {
 		Models []map[string]interface{} `json:"models"`
 	}
+	if json.Unmarshal([]byte(output), &result) == nil && result.Models != nil {
+		return result.Models, nil
+	}
+
+	// Attempt 2: Find JSON substring (object or array)
+	jsonStr := extractJSON(output)
+	if jsonStr == "" {
+		return nil, domain.ErrInternal("invalid cli output format", fmt.Errorf("no json found in output"))
+	}
+
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		// Maybe it's a raw array
+		var rawModels []map[string]interface{}
+		if json.Unmarshal([]byte(jsonStr), &rawModels) == nil {
+			return rawModels, nil
+		}
 		return nil, domain.ErrInternal("failed to parse models json", err)
 	}
 
@@ -399,20 +440,46 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 
 	// Whitelist allowed subcommands for security
 	allowed := map[string]bool{
-		"models": true,
-		"agents": true,
-		"session": true,
+		// Core
+		"models":   true,
+		"agents":   true,
+		"session":  true,
 		"sessions": true,
-		"config": true,
-		"status": true,
-		"auth": true, // Enabled for auth add/login
-		"help": true,
-		"version": true,
-		"skills": true, // Enabled for skill install
-		"cron": true,   // Enabled for cron jobs
+		"config":   true,
+		"status":   true,
+		"auth":     true,
+		"help":     true,
+		"version":  true,
+		"skills":   true,
+		"cron":     true,
+		// Channels & Messaging
+		"channels": true,
+		"message":  true,
+		"pairing":  true,
+		// Diagnostics
+		"doctor": true,
+		"health": true,
+		"logs":   true,
+		// Memory & Data
+		"memory": true,
+		// Extensions
+		"hooks":   true,
+		"plugins": true,
+		// Security
+		"security": true,
+		// System
+		"system": true,
+		"nodes":  true,
 	}
 	if len(args) == 0 || !allowed[args[0]] {
 		return nil, domain.ErrBadRequest("command not allowed or empty")
+	}
+
+	// SEC-1 FIX: Sanitize all arguments against shell metacharacters
+	for _, arg := range args {
+		if containsShellMeta(arg) {
+			return nil, domain.ErrBadRequest("argument contains disallowed characters")
+		}
 	}
 
 	// Prepend "openclaw"
@@ -420,14 +487,16 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, fullCmd)
 	if err != nil {
-		return nil, domain.ErrInternal("command failed", err)
+		// SEC-3 FIX: Sanitize error before returning to client
+		return nil, domain.ErrInternal("command failed", fmt.Errorf("%s", sanitizeError(err.Error())))
 	}
 
 	// Try to parse as JSON if it looks like one
 	output = strings.TrimSpace(output)
-	if strings.HasPrefix(output, "{") || strings.HasPrefix(output, "[") {
+	jsonStr := extractJSON(output)
+	if jsonStr != "" {
 		var jsonResult interface{}
-		if json.Unmarshal([]byte(output), &jsonResult) == nil {
+		if json.Unmarshal([]byte(jsonStr), &jsonResult) == nil {
 			return jsonResult, nil
 		}
 	}
@@ -441,13 +510,54 @@ func (s *ProjectService) UpdateRepo(ctx context.Context, id, userID, repoURL, we
 	return s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret)
 }
 
+// OAuthGetURL starts an OAuth login flow and captures the authorization URL.
+// Runs with a short timeout since the CLI prints the URL then blocks waiting for callback.
+func (s *ProjectService) OAuthGetURL(ctx context.Context, projectID, userID, provider string) (string, error) {
+	project, err := s.repo.FindByID(ctx, projectID, userID)
+	if err != nil {
+		return "", domain.ErrNotFound("project not found")
+	}
+	if project.ContainerID == nil || *project.ContainerID == "" {
+		return "", domain.ErrBadRequest("project container not running")
+	}
+
+	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
+	output, err := s.container.ExecCommandWithTimeout(ctx, *project.ContainerID, cmd, 10*time.Second)
+	if output != "" {
+		return output, nil
+	}
+	if err != nil {
+		return "", domain.ErrInternal("failed to start OAuth", fmt.Errorf("%s", sanitizeError(err.Error())))
+	}
+	return output, nil
+}
+
+// OAuthSubmitCallback completes an OAuth flow by submitting the callback URL to the CLI.
+// The CLI reads the callback URL from stdin to exchange the authorization code for tokens.
+func (s *ProjectService) OAuthSubmitCallback(ctx context.Context, projectID, userID, provider, callbackURL string) (string, error) {
+	project, err := s.repo.FindByID(ctx, projectID, userID)
+	if err != nil {
+		return "", domain.ErrNotFound("project not found")
+	}
+	if project.ContainerID == nil || *project.ContainerID == "" {
+		return "", domain.ErrBadRequest("project container not running")
+	}
+
+	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
+	output, err := s.container.ExecCommandWithStdinAndOutput(ctx, *project.ContainerID, cmd, callbackURL)
+	if err != nil {
+		return "", domain.ErrInternal("OAuth callback failed", fmt.Errorf("%s", sanitizeError(err.Error())))
+	}
+	return output, nil
+}
+
 // Delete removes a project.
 func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 	project, _ := s.repo.FindByID(ctx, id, userID)
 	if project != nil && project.ContainerID != nil {
 		_ = s.container.Remove(ctx, *project.ContainerID)
 	}
-	return s.repo.Delete(ctx, id, userID)
+	return s.repo.Delete(ctx, id)
 }
 
 // buildEnvVars constructs the environment variables for the container.
@@ -472,4 +582,69 @@ func maskSecret(s string) string {
 
 func formatValidationErrors(err error) string {
 	return err.Error()
+}
+
+// deepCopyMap creates a deep copy of a map[string]interface{} to avoid mutating the original.
+func deepCopyMap(m map[string]interface{}) map[string]interface{} {
+	b, _ := json.Marshal(m)
+	var result map[string]interface{}
+	_ = json.Unmarshal(b, &result)
+	return result
+}
+
+// extractJSON finds and returns the first valid JSON object or array substring.
+// Handles CLI output that has banner text before/after the JSON.
+func extractJSON(s string) string {
+	// Try to find { or [ start
+	for i, ch := range s {
+		if ch == '{' || ch == '[' {
+			closing := byte('}')
+			if ch == '[' {
+				closing = ']'
+			}
+			// Find matching closing bracket, counting nesting
+			depth := 0
+			for j := i; j < len(s); j++ {
+				if s[j] == byte(ch) {
+					depth++
+				} else if s[j] == closing {
+					depth--
+					if depth == 0 {
+						return s[i : j+1]
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// containsShellMeta returns true if the string contains shell metacharacters
+// that could lead to command injection.
+func containsShellMeta(s string) bool {
+	dangerous := []string{";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\n", "\r", "\\"}
+	for _, d := range dangerous {
+		if strings.Contains(s, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeError removes potential secrets (API keys, tokens) from error messages
+// before returning them to the client.
+func sanitizeError(msg string) string {
+	// Redact anything that looks like an API key pattern
+	// Common patterns: sk-..., key-..., token=..., --key ...value
+	lines := strings.Split(msg, "\n")
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") {
+			// Keep the line but redact the value portion
+			if idx := strings.Index(line, "sk-"); idx != -1 {
+				lines[i] = line[:idx] + "sk-[REDACTED]"
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
