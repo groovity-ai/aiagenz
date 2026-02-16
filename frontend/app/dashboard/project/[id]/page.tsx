@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeft, Play, Square, RotateCw, Terminal, Trash2 } from "lucide-react"
+import { ArrowLeft, Play, Square, RotateCw, Trash2, Settings, Terminal, Activity } from "lucide-react"
 import dynamic from "next/dynamic"
-import { SettingsDialog } from "@/components/SettingsDialog"
+import { ConfigTab } from "@/components/ConfigTab"
 
 const Console = dynamic(() => import("@/components/Console"), {
   ssr: false,
@@ -113,52 +113,59 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
             </div>
         </header>
 
-        <main className="grid flex-1 items-start gap-4 p-4 sm:px-6 sm:py-0 md:gap-8 lg:grid-cols-3 xl:grid-cols-3 mt-6">
-            
-            <div className="grid auto-rows-max items-start gap-4 md:gap-8 lg:col-span-1">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Resources</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid gap-4">
-                        <div className="grid gap-2">
-                            <div className="text-sm font-medium text-muted-foreground">Type</div>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-xl font-bold">{project.type}</span>
-                            </div>
-                        </div>
-                        <div className="grid gap-2">
-                            <div className="text-sm font-medium text-muted-foreground">Container ID</div>
-                            <div className="flex items-baseline gap-2">
-                                <span className="font-mono text-xs truncate w-full bg-muted p-1 rounded">{project.containerId || "N/A"}</span>
-                            </div>
-                        </div>
-                    </CardContent>
-                    <CardFooter>
-                        <SettingsDialog project={project} onUpdate={fetchProject} />
-                    </CardFooter>
-                </Card>
-            </div>
+        <main className="flex-1 p-6 space-y-6">
+            <Tabs defaultValue="overview" className="h-full flex flex-col space-y-6">
+                <div className="flex items-center justify-between">
+                    <TabsList>
+                        <TabsTrigger value="overview" className="gap-2"><Activity className="h-4 w-4"/> Overview</TabsTrigger>
+                        <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4"/> Configuration</TabsTrigger>
+                        <TabsTrigger value="console" className="gap-2"><Terminal className="h-4 w-4"/> Console</TabsTrigger>
+                    </TabsList>
+                </div>
 
-            <div className="grid auto-rows-max items-start gap-4 md:gap-8 lg:col-span-2">
-                <Tabs defaultValue="logs">
-                    <div className="flex items-center">
-                        <TabsList>
-                            <TabsTrigger value="logs">Live Logs</TabsTrigger>
-                            <TabsTrigger value="console">Console</TabsTrigger>
-                        </TabsList>
-                    </div>
-                    <TabsContent value="logs">
-                        <Card className="bg-black text-green-400 font-mono text-sm h-[500px] overflow-auto p-4 rounded-lg border-slate-800">
-                            <pre className="whitespace-pre-wrap">{logs || "Waiting for logs..."}</pre>
+                <TabsContent value="overview" className="flex-1 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-3">
+                        {/* Stats Card */}
+                        <Card className="col-span-1">
+                            <CardHeader>
+                                <CardTitle>Resources</CardTitle>
+                            </CardHeader>
+                            <CardContent className="grid gap-4">
+                                <div className="grid gap-2">
+                                    <div className="text-sm font-medium text-muted-foreground">Type</div>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="text-xl font-bold">{project.type}</span>
+                                    </div>
+                                </div>
+                                <div className="grid gap-2">
+                                    <div className="text-sm font-medium text-muted-foreground">Container ID</div>
+                                    <div className="bg-muted p-2 rounded font-mono text-xs truncate">
+                                        {project.containerId || "N/A"}
+                                    </div>
+                                </div>
+                            </CardContent>
                         </Card>
-                    </TabsContent>
-                    <TabsContent value="console">
-                        <Console projectId={id} />
-                    </TabsContent>
-                </Tabs>
-            </div>
 
+                        {/* Logs Card */}
+                        <Card className="col-span-2 h-[500px] flex flex-col">
+                            <CardHeader>
+                                <CardTitle>Live Logs</CardTitle>
+                            </CardHeader>
+                            <CardContent className="flex-1 bg-black text-green-400 font-mono text-xs p-4 rounded-lg border-slate-800 overflow-auto mx-6 mb-6">
+                                <pre className="whitespace-pre-wrap">{logs || "Waiting for logs..."}</pre>
+                            </CardContent>
+                        </Card>
+                    </div>
+                </TabsContent>
+
+                <TabsContent value="config" className="flex-1">
+                    <ConfigTab projectId={id} />
+                </TabsContent>
+
+                <TabsContent value="console" className="flex-1 h-[600px]">
+                    <Console projectId={id} />
+                </TabsContent>
+            </Tabs>
         </main>
     </div>
   )

@@ -42,7 +42,57 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Update handles PUT /api/projects/{id}.
+// GetRuntimeConfig handles GET /projects/{id}/config.
+func (h *ProjectHandler) GetRuntimeConfig(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	config, err := h.svc.GetRuntimeConfig(r.Context(), id, userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, config)
+}
+
+// UpdateRuntimeConfig handles PUT /projects/{id}/config.
+func (h *ProjectHandler) UpdateRuntimeConfig(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	var config map[string]interface{}
+	if err := DecodeJSON(r, &config); err != nil {
+		Error(w, err)
+		return
+	}
+
+	if err := h.svc.UpdateRuntimeConfig(r.Context(), id, userID, config); err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Config updated and container restarted",
+	})
+}
+
+// GetModels handles GET /projects/{id}/models.
+func (h *ProjectHandler) GetModels(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	models, err := h.svc.GetAvailableModels(r.Context(), id, userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"models": models,
+	})
+}
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")

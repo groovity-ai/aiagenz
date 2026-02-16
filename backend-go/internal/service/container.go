@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // ContainerService wraps the Docker SDK for container operations.
@@ -171,6 +173,8 @@ func (s *ContainerService) Exec(ctx context.Context, containerID string) (string
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
+		User:         "node",
+		WorkingDir:   "/home/node",
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create exec: %w", err)
@@ -185,6 +189,38 @@ func (s *ContainerService) ExecAttach(ctx context.Context, execID string) (*type
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
 	return &resp, nil
+}
+
+// ExecCommand runs a command inside a container and returns stdout/stderr.
+func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, cmd []string) (string, error) {
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	respID, err := s.cli.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	resp, err := s.cli.ContainerExecAttach(ctx, respID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Read output using stdcopy (demultiplex)
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
+		return "", fmt.Errorf("failed to read output: %w", err)
+	}
+
+	// If command failed (cat failed), return stderr
+	if stderr.Len() > 0 {
+		return "", fmt.Errorf("command failed: %s", stderr.String())
+	}
+
+	return stdout.String(), nil
 }
 
 // Stats returns CPU and memory usage for a container.

@@ -140,14 +140,21 @@ func main() {
 		// Projects
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
-		r.Get("/api/projects/{id}", projectHandler.GetByID)
-		r.Put("/api/projects/{id}", projectHandler.Update) // Added PUT
-		r.Post("/api/projects/{id}/control", projectHandler.Control)
-		r.Delete("/api/projects/{id}", projectHandler.Delete)
+		
+		// Specific routes BEFORE generic {id} route
+		r.Get("/api/projects/{id}/config", projectHandler.GetRuntimeConfig)
+		r.Put("/api/projects/{id}/config", projectHandler.UpdateRuntimeConfig)
+		r.Get("/api/projects/{id}/models", projectHandler.GetModels) // Added
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)
 		r.Get("/api/projects/{id}/stats", statsHandler.ContainerStats)
 		r.Get("/api/projects/{id}/metrics", statsHandler.GetProjectMetrics)
+		r.Post("/api/projects/{id}/control", projectHandler.Control)
 		r.Patch("/api/projects/{id}/repo", projectHandler.UpdateRepo)
+
+		// Generic routes
+		r.Get("/api/projects/{id}", projectHandler.GetByID)
+		r.Put("/api/projects/{id}", projectHandler.Update)
+		r.Delete("/api/projects/{id}", projectHandler.Delete)
 
 		// Payment routes
 		r.Post("/api/payment/checkout", paymentHandler.CreateCheckout)
