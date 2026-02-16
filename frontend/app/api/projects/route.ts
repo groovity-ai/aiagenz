@@ -10,7 +10,11 @@ async function getToken() {
     
     // Debug: Print all cookies
     console.log('[Debug] Cookies received:', cookieStore.getAll().map(c => c.name));
-    if (!token) console.log('[Debug] Token is missing!');
+    if (!token) {
+        console.log('[Debug] Token is missing!');
+    } else {
+        console.log('[Debug] Token found (len):', token.length);
+    }
     
     return token;
 }
