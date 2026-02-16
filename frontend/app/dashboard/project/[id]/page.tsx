@@ -7,9 +7,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeft, Play, Square, RotateCw, Trash2, Settings, Terminal, Activity } from "lucide-react"
+import { ArrowLeft, Play, Square, RotateCw, Trash2, Settings, Terminal, Activity, Box, Clock, FileJson } from "lucide-react"
 import dynamic from "next/dynamic"
 import { ConfigTab } from "@/components/ConfigTab"
+import { SkillsTab } from "@/components/SkillsTab"
+import { AutomationTab } from "@/components/AutomationTab"
+import { AdvancedConfigTab } from "@/components/AdvancedConfigTab"
 
 const Console = dynamic(() => import("@/components/Console"), {
   ssr: false,
@@ -115,10 +118,13 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
 
         <main className="flex-1 p-6 space-y-6">
             <Tabs defaultValue="overview" className="h-full flex flex-col space-y-6">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between overflow-x-auto">
                     <TabsList>
                         <TabsTrigger value="overview" className="gap-2"><Activity className="h-4 w-4"/> Overview</TabsTrigger>
-                        <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4"/> Configuration</TabsTrigger>
+                        <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4"/> Config</TabsTrigger>
+                        <TabsTrigger value="skills" className="gap-2"><Box className="h-4 w-4"/> Skills</TabsTrigger>
+                        <TabsTrigger value="automation" className="gap-2"><Clock className="h-4 w-4"/> Automation</TabsTrigger>
+                        <TabsTrigger value="advanced" className="gap-2"><FileJson className="h-4 w-4"/> Advanced</TabsTrigger>
                         <TabsTrigger value="console" className="gap-2"><Terminal className="h-4 w-4"/> Console</TabsTrigger>
                     </TabsList>
                 </div>
@@ -160,6 +166,18 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
 
                 <TabsContent value="config" className="flex-1">
                     <ConfigTab projectId={id} />
+                </TabsContent>
+
+                <TabsContent value="skills" className="flex-1">
+                    <SkillsTab projectId={id} />
+                </TabsContent>
+
+                <TabsContent value="automation" className="flex-1">
+                    <AutomationTab projectId={id} />
+                </TabsContent>
+
+                <TabsContent value="advanced" className="flex-1">
+                    <AdvancedConfigTab projectId={id} />
                 </TabsContent>
 
                 <TabsContent value="console" className="flex-1 h-[600px]">
