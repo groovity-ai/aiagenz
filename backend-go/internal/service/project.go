@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -359,17 +358,10 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to create config directory", err)
 	}
 
-	// BUG-1 FIX: Write files without shell interpolation — use base64 pipe via separate commands
 	// 3. Write openclaw.json (System Config)
 	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
-	systemBase64 := base64.StdEncoding.EncodeToString(systemConfigBytes)
-	writeSystemCmd := []string{"sh", "-c", "base64 -d > /home/node/.openclaw/openclaw.json"}
-	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeSystemCmd, systemBase64); err != nil {
-		// Fallback: use echo pipe approach (safe because base64 has no shell-special chars)
-		fallbackCmd := []string{"sh", "-c", "echo " + systemBase64 + " | base64 -d > /home/node/.openclaw/openclaw.json"}
-		if _, err := s.container.ExecCommand(ctx, *project.ContainerID, fallbackCmd); err != nil {
-			return domain.ErrInternal("failed to write config to container", err)
-		}
+	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", systemConfigBytes); err != nil {
+		return domain.ErrInternal("failed to write config to container", err)
 	}
 
 	// 4. Write auth-profiles.json (Credentials)
@@ -378,13 +370,11 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		"profiles": profiles,
 	}
 	authStoreBytes, _ := json.MarshalIndent(authStore, "", "  ")
-	authBase64 := base64.StdEncoding.EncodeToString(authStoreBytes)
-	fallbackAuthCmd := []string{"sh", "-c", "echo " + authBase64 + " | base64 -d > /home/node/.openclaw/agents/main/agent/auth-profiles.json"}
-	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, fallbackAuthCmd); err != nil {
+	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/agents/main/agent/auth-profiles.json", authStoreBytes); err != nil {
 		return domain.ErrInternal("failed to write auth profiles to container", err)
 	}
 
-	// 5. Fix permissions
+	// 5. Fix permissions (ensure node user owns the files we just injected)
 	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw"}); err != nil {
 		// Non-fatal: chown may fail in some container setups
 	}
