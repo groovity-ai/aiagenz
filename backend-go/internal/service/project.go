@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -221,7 +220,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	// If the container is running, we must update openclaw.json so the changes take effect.
 	if project.Status == "running" && project.ContainerID != nil {
 		fmt.Printf("🔄 Syncing config for project %s (Token: %s)\n", project.Name, maskSecret(currentConfig.TelegramToken))
-		
+
 		// Fetch current runtime config
 		runtimeConfig, err := s.GetRuntimeConfig(ctx, id, userID)
 		if err == nil {
@@ -232,24 +231,40 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				if runtimeConfig["channels"] == nil {
 					runtimeConfig["channels"] = make(map[string]interface{})
 				}
-				channels := runtimeConfig["channels"].(map[string]interface{})
-				
+				channels, ok := runtimeConfig["channels"].(map[string]interface{})
+				if !ok {
+					channels = make(map[string]interface{})
+					runtimeConfig["channels"] = channels
+				}
+
 				if channels["telegram"] == nil {
 					channels["telegram"] = make(map[string]interface{})
 				}
-				telegram := channels["telegram"].(map[string]interface{})
+				telegram, ok := channels["telegram"].(map[string]interface{})
+				if !ok {
+					telegram = make(map[string]interface{})
+					channels["telegram"] = telegram
+				}
 				telegram["enabled"] = true
 
 				if telegram["accounts"] == nil {
 					telegram["accounts"] = make(map[string]interface{})
 				}
-				accounts := telegram["accounts"].(map[string]interface{})
+				accounts, ok := telegram["accounts"].(map[string]interface{})
+				if !ok {
+					accounts = make(map[string]interface{})
+					telegram["accounts"] = accounts
+				}
 
 				if accounts["default"] == nil {
 					accounts["default"] = make(map[string]interface{})
 				}
-				def := accounts["default"].(map[string]interface{})
-				
+				def, ok := accounts["default"].(map[string]interface{})
+				if !ok {
+					def = make(map[string]interface{})
+					accounts["default"] = def
+				}
+
 				// Set botToken
 				def["botToken"] = currentConfig.TelegramToken
 			} else {
@@ -261,13 +276,21 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				if runtimeConfig["auth"] == nil {
 					runtimeConfig["auth"] = make(map[string]interface{})
 				}
-				auth := runtimeConfig["auth"].(map[string]interface{})
-				
+				auth, ok := runtimeConfig["auth"].(map[string]interface{})
+				if !ok {
+					auth = make(map[string]interface{})
+					runtimeConfig["auth"] = auth
+				}
+
 				if auth["profiles"] == nil {
 					auth["profiles"] = make(map[string]interface{})
 				}
-				profiles := auth["profiles"].(map[string]interface{})
-				
+				profiles, ok := auth["profiles"].(map[string]interface{})
+				if !ok {
+					profiles = make(map[string]interface{})
+					auth["profiles"] = profiles
+				}
+
 				// Standard profile key format: provider:default
 				profileKey := currentConfig.Provider + ":default"
 				profiles[profileKey] = map[string]interface{}{
@@ -408,7 +431,7 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 	}
 
 	url := fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
-	
+
 	var bodyReader io.Reader
 	if body != nil {
 		jsonBytes, _ := json.Marshal(body)
@@ -454,7 +477,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			return config, nil
 		}
 	}
-	
+
 	// 2. Fallback: Read config file (Slow/Robust Path)
 	// Read config file (use /home/node/ not /root for consistency with running user)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
@@ -578,7 +601,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// Write openclaw.json via CopyToContainer
 	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
 	fmt.Printf("📝 Writing openclaw.json (%d bytes) to container %s\n", len(systemConfigBytes), (*project.ContainerID)[:12])
-	
+
 	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", systemConfigBytes); err != nil {
 		fmt.Printf("❌ ERROR writing openclaw.json: %v\n", err)
 		return domain.ErrInternal("failed to write config to container", err)

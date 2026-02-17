@@ -31,7 +31,41 @@ type ContainerInfo struct {
 	IP     string `json:"ip,omitempty"`
 }
 
-// ...
+const NetworkName = "aiagenz-network"
+
+// NewContainerService creates a new Docker client.
+func NewContainerService() (*ContainerService, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker client: %w", err)
+	}
+
+	svc := &ContainerService{cli: cli}
+
+	// Ensure shared network exists
+	if err := svc.ensureNetwork(context.Background()); err != nil {
+		log.Printf("⚠️ Failed to ensure network: %v", err)
+	}
+
+	return svc, nil
+}
+
+// ensureNetwork checks if the shared network exists, creating it if not.
+func (s *ContainerService) ensureNetwork(ctx context.Context) error {
+	networks, err := s.cli.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	for _, net := range networks {
+		if net.Name == NetworkName {
+			return nil
+		}
+	}
+
+	_, err = s.cli.NetworkCreate(ctx, NetworkName, network.CreateOptions{})
+	return err
+}
 
 // Inspect returns the status of a container.
 func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*ContainerInfo, error) {
@@ -429,7 +463,7 @@ func (s *ContainerService) CopyDirToContainer(ctx context.Context, containerID s
 		if err != nil {
 			continue
 		}
-		
+
 		// Read file content
 		content, err := os.ReadFile(path.Join(srcDir, file.Name()))
 		if err != nil {
@@ -441,7 +475,7 @@ func (s *ContainerService) CopyDirToContainer(ctx context.Context, containerID s
 			continue
 		}
 		header.Name = file.Name() // Relative name
-		
+
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
@@ -449,7 +483,7 @@ func (s *ContainerService) CopyDirToContainer(ctx context.Context, containerID s
 			return err
 		}
 	}
-	
+
 	if err := tw.Close(); err != nil {
 		return err
 	}

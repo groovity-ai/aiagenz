@@ -1,7 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 
 // Configuration
 const PORT = 4444; // Port khusus buat AiAgenz Bridge
@@ -23,22 +23,27 @@ const writeJson = (filePath, data) => {
     // Ensure dir exists
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    
+
     // Atomic write
     const tempPath = `${filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
     fs.renameSync(tempPath, filePath);
 };
 
-// Utility: Merge Deep
-const mergeDeep = (target, source) => {
+// Utility: Merge Deep (recursive, non-mutating on source)
+const mergeDeep = (target = {}, source = {}) => {
+    const result = { ...target };
     for (const key in source) {
-        if (source[key] instanceof Object && key in target) {
-            Object.assign(source[key], mergeDeep(target[key], source[key]));
+        if (
+            source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) &&
+            result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])
+        ) {
+            result[key] = mergeDeep(result[key], source[key]);
+        } else {
+            result[key] = source[key];
         }
     }
-    Object.assign(target || {}, source);
-    return target;
+    return result;
 };
 
 // --- HANDLERS ---
@@ -49,10 +54,10 @@ const handlers = {
         // Basic health check + Config summary
         const config = readJson(CONFIG_PATH);
         const auth = readJson(AUTH_PROFILES_PATH);
-        
+
         const telegramEnabled = config.channels?.telegram?.enabled || false;
         const telegramToken = config.channels?.telegram?.accounts?.default?.botToken ? "SET" : "MISSING";
-        
+
         res.json({
             ok: true,
             uptime: process.uptime(),
@@ -83,7 +88,7 @@ const handlers = {
         try {
             const current = readJson(CONFIG_PATH);
             const updates = JSON.parse(body);
-            
+
             // Special Logic: Map 'token' to 'botToken' for Telegram if needed
             if (updates.channels?.telegram?.accounts?.default?.token) {
                 if (!updates.channels.telegram.accounts.default.botToken) {
@@ -95,9 +100,9 @@ const handlers = {
             // Merge
             const merged = mergeDeep(current, updates);
             writeJson(CONFIG_PATH, merged);
-            
+
             res.json({ ok: true, message: "Config updated" });
-            
+
             // Optional: Trigger reload if requested
             if (req.headers['x-reload'] === 'true') {
                 setTimeout(() => process.exit(0), 500); // Let Docker restart us
@@ -115,27 +120,23 @@ const handlers = {
 
             const current = readJson(AUTH_PROFILES_PATH);
             if (!current.profiles) current.profiles = {};
-            
+
             const profileKey = `${provider}:default`;
             current.profiles[profileKey] = {
                 provider,
                 mode: mode || 'api_key',
                 key
             };
-            
+
             writeJson(AUTH_PROFILES_PATH, current);
             res.json({ ok: true, message: `Auth profile ${profileKey} added` });
-            
+
             // Trigger reload to apply auth
-            setTimeout(() => process.exit(0), 500); 
+            setTimeout(() => process.exit(0), 500);
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
     },
-    
-const { execFile } = require('child_process');
-
-// ...
 
     // POST /restart
     'POST:/restart': (req, res) => {
@@ -157,16 +158,16 @@ const { execFile } = require('child_process');
             }, (error, stdout, stderr) => {
                 if (error) {
                     // Return stdout too because CLI might print error json to stdout
-                    res.status(500).json({ 
-                        ok: false, 
-                        error: error.message, 
+                    res.status(500).json({
+                        ok: false,
+                        error: error.message,
                         code: error.code,
-                        stdout: stdout, 
-                        stderr: stderr 
+                        stdout: stdout,
+                        stderr: stderr
                     });
                     return;
                 }
-                
+
                 // Try parse JSON if possible, otherwise return string
                 let data = stdout;
                 try {
@@ -215,11 +216,11 @@ module.exports = {
     id: "aiagenz-bridge",
     name: "AiAgenz Bridge",
     description: "Internal Control Plane for Dashboard",
-    
+
     // OpenClaw calls this when loading the plugin
     activate: async (context) => {
         console.log(`[aiagenz-bridge] Starting Control Plane on port ${PORT}...`);
-        
+
         return new Promise((resolve) => {
             server.listen(PORT, '0.0.0.0', () => {
                 console.log(`[aiagenz-bridge] Listening on 0.0.0.0:${PORT}`);
@@ -227,7 +228,7 @@ module.exports = {
             });
         });
     },
-    
+
     deactivate: async () => {
         server.close();
     }
