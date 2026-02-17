@@ -1,12 +1,14 @@
 package service
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -366,6 +368,29 @@ func (s *ContainerService) ExecCommandWithStdinAndOutput(ctx context.Context, co
 	}
 
 	return stdout.String(), nil
+}
+
+// CopyToContainer copies content to a file inside the container.
+func (s *ContainerService) CopyToContainer(ctx context.Context, containerID string, destPath string, content []byte) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	header := &tar.Header{
+		Name: filepath.Base(destPath),
+		Mode: 0666,
+		Size: int64(len(content)),
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("failed to write tar header: %w", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		return fmt.Errorf("failed to write tar body: %w", err)
+	}
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("failed to close tar writer: %w", err)
+	}
+
+	return s.cli.CopyToContainer(ctx, containerID, filepath.Dir(destPath), &buf, container.CopyToContainerOptions{})
 }
 
 // Stats returns CPU and memory usage for a container.

@@ -96,6 +96,14 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		return nil, domain.ErrInternal("failed to create container", err)
 	}
 
+	// Clean Start: Inject Minimal "Anti-Doctor" Config
+	// This prevents OpenClaw from auto-enabling Telegram and stub providers
+	minimalConfig := []byte(`{"channels": {"telegram": {"enabled": false}}}`)
+	if err := s.container.CopyToContainer(ctx, containerID, "/home/node/.openclaw/openclaw.json", minimalConfig); err != nil {
+		// Log warning but allow startup (might be a custom image or permission issue)
+		fmt.Printf("⚠️ Failed to inject minimal config: %v\n", err)
+	}
+
 	if err := s.container.Start(ctx, containerID); err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", &containerID)
 		return nil, domain.ErrInternal("failed to start container", err)
