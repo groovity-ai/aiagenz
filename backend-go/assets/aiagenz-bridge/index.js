@@ -3,12 +3,27 @@ const fs = require('fs');
 const path = require('path');
 const { exec, execFile } = require('child_process');
 
-// Configuration
-const PORT = 4444; // Port khusus buat AiAgenz Bridge
-const CONFIG_PATH = '/home/node/.openclaw/openclaw.json';
-const AUTH_PROFILES_PATH = '/home/node/.openclaw/agents/main/agent/auth-profiles.json';
+// --- CONFIGURATION ---
+const PORT = 4444;
 
-// Utility: Read JSON
+// Default paths (overridden by context.workspacePath if available)
+let CONFIG_PATH = '/home/node/.openclaw/openclaw.json';
+let AUTH_PROFILES_PATH = '/home/node/.openclaw/agents/main/agent/auth-profiles.json';
+let WORKSPACE_PATH = '/home/node/.openclaw';
+
+// --- PLUGIN STATE ---
+// Stores references from register(api) and activate(context)
+const state = {
+    api: null,          // OpenClaw Plugin API reference
+    context: null,      // OpenClaw activation context
+    activeSessions: 0,  // Tracked via session:start / session:end events
+    recentCommands: [], // Last 20 commands (ring buffer)
+    lastEvent: null,    // Last event received
+    startedAt: null,    // Plugin start timestamp
+};
+
+// --- UTILITIES ---
+
 const readJson = (filePath) => {
     try {
         if (!fs.existsSync(filePath)) return {};
@@ -18,19 +33,15 @@ const readJson = (filePath) => {
     }
 };
 
-// Utility: Write JSON
 const writeJson = (filePath, data) => {
-    // Ensure dir exists
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
     // Atomic write
     const tempPath = `${filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
     fs.renameSync(tempPath, filePath);
 };
 
-// Utility: Merge Deep (recursive, non-mutating on source)
 const mergeDeep = (target = {}, source = {}) => {
     const result = { ...target };
     for (const key in source) {
@@ -46,12 +57,17 @@ const mergeDeep = (target = {}, source = {}) => {
     return result;
 };
 
-// --- HANDLERS ---
+// Track a command event (ring buffer, max 20)
+const trackCommand = (command) => {
+    state.recentCommands.push({ command, timestamp: new Date().toISOString() });
+    if (state.recentCommands.length > 20) state.recentCommands.shift();
+};
+
+// --- HTTP HANDLERS ---
 
 const handlers = {
-    // GET /status
+    // GET /status — enhanced with live event data
     'GET:/status': (req, res) => {
-        // Basic health check + Config summary
         const config = readJson(CONFIG_PATH);
         const auth = readJson(AUTH_PROFILES_PATH);
 
@@ -63,18 +79,27 @@ const handlers = {
             uptime: process.uptime(),
             pid: process.pid,
             memory: process.memoryUsage(),
+            startedAt: state.startedAt,
+            hasApi: !!state.api,
+            activeSessions: state.activeSessions,
+            recentCommands: state.recentCommands.slice(-5), // last 5
+            lastEvent: state.lastEvent,
             summary: {
                 telegram: { enabled: telegramEnabled, token: telegramToken },
                 auth_profiles: Object.keys(auth.profiles || {}),
                 gateway_port: config.gateway?.port
+            },
+            paths: {
+                config: CONFIG_PATH,
+                authProfiles: AUTH_PROFILES_PATH,
+                workspace: WORKSPACE_PATH
             }
         });
     },
 
-    // GET /config (Read Full Config)
+    // GET /config
     'GET:/config': (req, res) => {
         const config = readJson(CONFIG_PATH);
-        // Inject auth profiles for dashboard visibility
         const auth = readJson(AUTH_PROFILES_PATH);
         if (auth.profiles) {
             if (!config.auth) config.auth = {};
@@ -83,13 +108,13 @@ const handlers = {
         res.json(config);
     },
 
-    // POST /config/update (Merge Config)
+    // POST /config/update
     'POST:/config/update': (req, res, body) => {
         try {
             const current = readJson(CONFIG_PATH);
             const updates = JSON.parse(body);
 
-            // Special Logic: Map 'token' to 'botToken' for Telegram if needed
+            // Normalize token → botToken for Telegram
             if (updates.channels?.telegram?.accounts?.default?.token) {
                 if (!updates.channels.telegram.accounts.default.botToken) {
                     updates.channels.telegram.accounts.default.botToken = updates.channels.telegram.accounts.default.token;
@@ -97,27 +122,24 @@ const handlers = {
                 delete updates.channels.telegram.accounts.default.token;
             }
 
-            // Merge
             const merged = mergeDeep(current, updates);
             writeJson(CONFIG_PATH, merged);
 
+            trackCommand('config:update');
             res.json({ ok: true, message: "Config updated" });
 
-            // Graceful reload: send SIGHUP to parent process (OpenClaw) if requested
+            // Graceful reload
             if (req.headers['x-reload'] === 'true') {
                 setTimeout(() => {
                     try {
-                        // Try SIGHUP first (graceful reload without killing the process)
                         if (process.ppid) {
                             process.kill(process.ppid, 'SIGHUP');
                             console.log('[aiagenz-bridge] Sent SIGHUP to parent for config reload');
                         } else {
-                            // Fallback: exit and let Docker restart policy handle it
                             console.log('[aiagenz-bridge] No parent PID, exiting for restart...');
                             process.exit(0);
                         }
                     } catch (e) {
-                        // SIGHUP failed — fallback to exit
                         console.log('[aiagenz-bridge] SIGHUP failed, exiting for restart:', e.message);
                         process.exit(0);
                     }
@@ -128,7 +150,7 @@ const handlers = {
         }
     },
 
-    // POST /auth/add (Add Profile)
+    // POST /auth/add
     'POST:/auth/add': (req, res, body) => {
         try {
             const { provider, key, mode } = JSON.parse(body);
@@ -145,10 +167,21 @@ const handlers = {
             };
 
             writeJson(AUTH_PROFILES_PATH, current);
+            trackCommand(`auth:add:${provider}`);
             res.json({ ok: true, message: `Auth profile ${profileKey} added` });
 
-            // Trigger reload to apply auth
-            setTimeout(() => process.exit(0), 500);
+            // Graceful reload
+            setTimeout(() => {
+                try {
+                    if (process.ppid) {
+                        process.kill(process.ppid, 'SIGHUP');
+                    } else {
+                        process.exit(0);
+                    }
+                } catch (e) {
+                    process.exit(0);
+                }
+            }, 500);
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -156,24 +189,24 @@ const handlers = {
 
     // POST /restart
     'POST:/restart': (req, res) => {
+        trackCommand('restart');
         res.json({ ok: true, message: "Restarting..." });
         setTimeout(() => process.exit(0), 100);
     },
 
-    // POST /command (Execute CLI)
+    // POST /command
     'POST:/command': (req, res, body) => {
         try {
             const { args } = JSON.parse(body);
             if (!Array.isArray(args)) throw new Error("Invalid args");
 
-            // Execute openclaw CLI
-            // Use --json output for parsing ease
-            const child = execFile('openclaw', args, {
+            trackCommand(`cli:${args.join(' ')}`);
+
+            execFile('openclaw', args, {
                 env: process.env,
-                timeout: 30000 // 30s timeout
+                timeout: 30000
             }, (error, stdout, stderr) => {
                 if (error) {
-                    // Return stdout too because CLI might print error json to stdout
                     res.status(500).json({
                         ok: false,
                         error: error.message,
@@ -184,12 +217,11 @@ const handlers = {
                     return;
                 }
 
-                // Try parse JSON if possible, otherwise return string
                 let data = stdout;
                 try {
                     data = JSON.parse(stdout);
                 } catch (e) {
-                    // Raw string
+                    // Raw string output
                 }
 
                 res.json({ ok: true, data: data, stderr: stderr });
@@ -201,10 +233,9 @@ const handlers = {
     }
 };
 
-// --- SERVER ---
+// --- HTTP SERVER ---
 
 const server = http.createServer((req, res) => {
-    // Helper to send JSON
     res.json = (data) => {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(data));
@@ -214,11 +245,12 @@ const server = http.createServer((req, res) => {
         return res;
     };
 
-    // Body Parser
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
-        const key = `${req.method}:${req.url}`;
+        // Strip query params for route matching
+        const urlPath = req.url.split('?')[0];
+        const key = `${req.method}:${urlPath}`;
         if (handlers[key]) {
             handlers[key](req, res, body);
         } else {
@@ -227,25 +259,77 @@ const server = http.createServer((req, res) => {
     });
 });
 
-// ENTRY POINT: OpenClaw Plugin Interface
+// --- OPENCLAW PLUGIN INTERFACE ---
+
 module.exports = {
     id: "aiagenz-bridge",
     name: "AiAgenz Bridge",
-    description: "Internal Control Plane for Dashboard",
+    description: "Internal Control Plane for AiAgenz Dashboard",
 
-    // OpenClaw calls this when loading the plugin
-    activate: async (context) => {
-        console.log(`[aiagenz-bridge] Starting Control Plane on port ${PORT}...`);
+    // register(api) — OpenClaw Plugin API hook
+    // Called by OpenClaw's plugin loader with internal API access
+    register(api) {
+        state.api = api;
+        console.log('[aiagenz-bridge] Registered with OpenClaw Plugin API');
+
+        // Subscribe to OpenClaw events for real-time tracking
+        try {
+            if (typeof api.on === 'function') {
+                api.on('session:start', (data) => {
+                    state.activeSessions++;
+                    state.lastEvent = { type: 'session:start', at: new Date().toISOString() };
+                    console.log('[aiagenz-bridge] Session started, active:', state.activeSessions);
+                });
+
+                api.on('session:end', (data) => {
+                    state.activeSessions = Math.max(0, state.activeSessions - 1);
+                    state.lastEvent = { type: 'session:end', at: new Date().toISOString() };
+                });
+
+                api.on('command:new', (data) => {
+                    trackCommand(`event:${data?.command || 'unknown'}`);
+                    state.lastEvent = { type: 'command:new', at: new Date().toISOString(), data };
+                });
+
+                console.log('[aiagenz-bridge] Subscribed to session:start, session:end, command:new');
+            } else {
+                console.log('[aiagenz-bridge] api.on not available — event hooks not supported in this OpenClaw version');
+            }
+        } catch (e) {
+            console.log('[aiagenz-bridge] Event subscription failed (non-fatal):', e.message);
+        }
+    },
+
+    // activate(context) — Plugin lifecycle hook
+    // Called after register(), with workspace context
+    async activate(context) {
+        state.context = context;
+        state.startedAt = new Date().toISOString();
+
+        // Resolve config paths from context (fallback to defaults)
+        if (context?.workspacePath) {
+            WORKSPACE_PATH = context.workspacePath;
+            CONFIG_PATH = path.join(WORKSPACE_PATH, 'openclaw.json');
+            // Auth profiles are relative to agents dir
+            AUTH_PROFILES_PATH = path.join(WORKSPACE_PATH, 'agents', 'main', 'agent', 'auth-profiles.json');
+            console.log(`[aiagenz-bridge] Using workspace path: ${WORKSPACE_PATH}`);
+        } else {
+            console.log(`[aiagenz-bridge] No workspacePath in context, using defaults: ${WORKSPACE_PATH}`);
+        }
+
+        console.log(`[aiagenz-bridge] Config: ${CONFIG_PATH}`);
+        console.log(`[aiagenz-bridge] Auth:   ${AUTH_PROFILES_PATH}`);
 
         return new Promise((resolve) => {
             server.listen(PORT, '0.0.0.0', () => {
-                console.log(`[aiagenz-bridge] Listening on 0.0.0.0:${PORT}`);
+                console.log(`[aiagenz-bridge] Control Plane listening on 0.0.0.0:${PORT}`);
                 resolve();
             });
         });
     },
 
-    deactivate: async () => {
+    async deactivate() {
+        console.log('[aiagenz-bridge] Shutting down...');
         server.close();
     }
 };
