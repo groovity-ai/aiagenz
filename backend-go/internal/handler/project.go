@@ -138,13 +138,15 @@ func (h *ProjectHandler) Logs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
-	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"status", "--json"})
+	logs, err := h.svc.GetContainerLogs(r.Context(), id, userID)
 	if err != nil {
-		// Fallback: return basic container info
+		// Fallback: return basic info
 		JSON(w, http.StatusOK, map[string]interface{}{"logs": "Container logs unavailable", "error": err.Error()})
 		return
 	}
-	JSON(w, http.StatusOK, result)
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, logs)
 }
 
 // UpdateRepo handles PATCH /api/projects/{id}/repo.

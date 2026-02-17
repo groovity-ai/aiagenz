@@ -431,6 +431,20 @@ func (s *ProjectService) GetAvailableModels(ctx context.Context, id, userID stri
 	return result.Models, nil
 }
 
+// GetContainerLogs returns the last N lines of Docker container logs (not openclaw commands).
+func (s *ProjectService) GetContainerLogs(ctx context.Context, id, userID string) (string, error) {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil || project == nil || project.ContainerID == nil {
+		return "", domain.ErrNotFound("project not found or container not running")
+	}
+
+	logs, err := s.container.Logs(ctx, *project.ContainerID, 200)
+	if err != nil {
+		return "", domain.ErrInternal("failed to get container logs", err)
+	}
+	return logs, nil
+}
+
 // RunOpenClawCommand executes an arbitrary openclaw cli command safely.
 func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID string, args []string) (interface{}, error) {
 	project, err := s.repo.FindByID(ctx, id, userID)

@@ -202,10 +202,19 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
     }, [projectId, isRunning, project?.containerId])
 
     useEffect(() => {
-        fetchAll()
-        const interval = setInterval(() => fetchAll(), 5000)
-        return () => clearInterval(interval)
-    }, [fetchAll])
+        // Grace period: wait 10s before first poll to let OpenClaw initialize
+        const initialDelay = setTimeout(() => {
+            fetchAll()
+        }, isRunning ? 10000 : 0)
+
+        // Poll every 15s (reduced from 5s to avoid overwhelming the container)
+        const interval = setInterval(() => fetchAll(), 15000)
+
+        return () => {
+            clearTimeout(initialDelay)
+            clearInterval(interval)
+        }
+    }, [fetchAll, isRunning])
 
     // Parse agent status intelligently
     const agentModel = typeof agentStatus === 'object' && agentStatus
