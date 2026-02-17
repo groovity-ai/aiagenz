@@ -358,11 +358,21 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to create config directory", err)
 	}
 
-	// 3. Write openclaw.json (System Config)
+	// 3. Write openclaw.json via stdin pipe (proven reliable method)
 	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
-	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", systemConfigBytes); err != nil {
-		fmt.Printf("❌ ERROR writing openclaw.json: %v\n", err) // DEBUG
+	fmt.Printf("📝 Writing openclaw.json (%d bytes) to container %s\n", len(systemConfigBytes), (*project.ContainerID)[:12])
+	writeCmd := []string{"tee", "/home/node/.openclaw/openclaw.json"}
+	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeCmd, string(systemConfigBytes)); err != nil {
+		fmt.Printf("❌ ERROR writing openclaw.json: %v\n", err)
 		return domain.ErrInternal("failed to write config to container", err)
+	}
+
+	// 3b. Verify the write by reading it back
+	readBack, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
+	if err != nil {
+		fmt.Printf("⚠️ WARNING: Could not verify config write: %v\n", err)
+	} else {
+		fmt.Printf("✅ Verified openclaw.json (%d bytes read back)\n", len(readBack))
 	}
 
 	// 4. Write auth-profiles.json (Credentials)
@@ -371,7 +381,8 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		"profiles": profiles,
 	}
 	authStoreBytes, _ := json.MarshalIndent(authStore, "", "  ")
-	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/agents/main/agent/auth-profiles.json", authStoreBytes); err != nil {
+	writeAuthCmd := []string{"tee", "/home/node/.openclaw/agents/main/agent/auth-profiles.json"}
+	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeAuthCmd, string(authStoreBytes)); err != nil {
 		return domain.ErrInternal("failed to write auth profiles to container", err)
 	}
 
