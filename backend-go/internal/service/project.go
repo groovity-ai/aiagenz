@@ -361,6 +361,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 3. Write openclaw.json (System Config)
 	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
 	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", systemConfigBytes); err != nil {
+		fmt.Printf("❌ ERROR writing openclaw.json: %v\n", err) // DEBUG
 		return domain.ErrInternal("failed to write config to container", err)
 	}
 

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"path/filepath"
+	"path"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -376,9 +376,10 @@ func (s *ContainerService) CopyToContainer(ctx context.Context, containerID stri
 	tw := tar.NewWriter(&buf)
 
 	header := &tar.Header{
-		Name: filepath.Base(destPath),
-		Mode: 0666,
-		Size: int64(len(content)),
+		Typeflag: tar.TypeReg,
+		Name:     path.Base(destPath),
+		Mode:     0666,
+		Size:     int64(len(content)),
 	}
 	if err := tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("failed to write tar header: %w", err)
@@ -390,7 +391,7 @@ func (s *ContainerService) CopyToContainer(ctx context.Context, containerID stri
 		return fmt.Errorf("failed to close tar writer: %w", err)
 	}
 
-	return s.cli.CopyToContainer(ctx, containerID, filepath.Dir(destPath), &buf, container.CopyToContainerOptions{})
+	return s.cli.CopyToContainer(ctx, containerID, path.Dir(destPath), &buf, container.CopyToContainerOptions{})
 }
 
 // Stats returns CPU and memory usage for a container.
