@@ -252,31 +252,36 @@ func (h *ProjectHandler) HandleCommand(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) GetAgentStatus(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
-	
-	// OPTIMIZATION: Do NOT run "openclaw status" CLI command. It's too heavy and causes hangs.
-	// Instead, just return the container status from Docker inspection.
-	// Users can check detailed status manually via logs if needed.
-	
-	// We'll mimic the response format slightly or just return basic status
+
 	project, err := h.svc.GetByID(r.Context(), id, userID)
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	
+
 	status := "stopped"
 	if project.Status == "running" {
 		status = "running"
 	}
-	
-	// Return a lightweight JSON
+
+	// Try Bridge /status for richer agent insight (non-blocking)
+	if status == "running" && project.ContainerID != nil {
+		if bridgeStatus := h.svc.GetBridgeStatus(r.Context(), *project.ContainerID); bridgeStatus != nil {
+			// Enrich with container-level status
+			bridgeStatus["container_status"] = status
+			JSON(w, http.StatusOK, bridgeStatus)
+			return
+		}
+	}
+
+	// Fallback: basic Docker status
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"status": status,
 		"agent": map[string]interface{}{
-			"id": "main",
+			"id":     "main",
 			"status": status,
 		},
-		"uptime": project.Status, // simplified
+		"uptime": project.Status,
 	})
 }
 

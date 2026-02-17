@@ -103,9 +103,25 @@ const handlers = {
 
             res.json({ ok: true, message: "Config updated" });
 
-            // Optional: Trigger reload if requested
+            // Graceful reload: send SIGHUP to parent process (OpenClaw) if requested
             if (req.headers['x-reload'] === 'true') {
-                setTimeout(() => process.exit(0), 500); // Let Docker restart us
+                setTimeout(() => {
+                    try {
+                        // Try SIGHUP first (graceful reload without killing the process)
+                        if (process.ppid) {
+                            process.kill(process.ppid, 'SIGHUP');
+                            console.log('[aiagenz-bridge] Sent SIGHUP to parent for config reload');
+                        } else {
+                            // Fallback: exit and let Docker restart policy handle it
+                            console.log('[aiagenz-bridge] No parent PID, exiting for restart...');
+                            process.exit(0);
+                        }
+                    } catch (e) {
+                        // SIGHUP failed — fallback to exit
+                        console.log('[aiagenz-bridge] SIGHUP failed, exiting for restart:', e.message);
+                        process.exit(0);
+                    }
+                }, 500);
             }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });

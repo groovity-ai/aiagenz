@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -445,43 +446,45 @@ func (s *ContainerService) CopyToContainer(ctx context.Context, containerID stri
 	return s.cli.CopyToContainer(ctx, containerID, path.Dir(destPath), &buf, container.CopyToContainerOptions{})
 }
 
-// CopyDirToContainer copies a local directory to the container.
+// CopyDirToContainer copies a local directory (recursively) to the container.
 func (s *ContainerService) CopyDirToContainer(ctx context.Context, containerID string, srcDir string, destPath string) error {
-	// Create tar stream in memory
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
-	// Walk directory
-	// Note: We assume flat structure or simple recursion for plugin
-	files, err := os.ReadDir(srcDir)
-	if err != nil {
-		return fmt.Errorf("failed to read source dir: %w", err)
-	}
-
-	for _, file := range files {
-		info, err := file.Info()
+	err := filepath.Walk(srcDir, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
-			continue
+			return err
+		}
+		// Skip directories (tar handles them implicitly via file paths)
+		if info.IsDir() {
+			return nil
 		}
 
-		// Read file content
-		content, err := os.ReadFile(path.Join(srcDir, file.Name()))
+		// Compute relative path for tar entry
+		relPath, err := filepath.Rel(srcDir, filePath)
 		if err != nil {
-			continue
+			return err
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
 		}
 
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
-			continue
+			return err
 		}
-		header.Name = file.Name() // Relative name
+		header.Name = relPath // Relative path preserves subdirectory structure
 
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
-		if _, err := tw.Write(content); err != nil {
-			return err
-		}
+		_, err = tw.Write(content)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to walk source dir: %w", err)
 	}
 
 	if err := tw.Close(); err != nil {

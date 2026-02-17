@@ -442,12 +442,17 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 	if err != nil {
 		return nil, err
 	}
-	// Add reload header if needed (we can param this later)
+	req.Header.Set("Content-Type", "application/json")
 	if method == "POST" {
 		req.Header.Set("x-reload", "true")
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Longer timeout for CLI command execution vs config reads
+	timeout := 5 * time.Second
+	if endpoint == "/command" {
+		timeout = 30 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("bridge request failed: %w", err)
@@ -462,7 +467,20 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 	return respBody, nil
 }
 
-// GetRuntimeConfig retrieves config via Bridge API (with fallback to File Read).
+// GetBridgeStatus queries the bridge /status endpoint for real agent health info.
+// Returns nil if bridge is unavailable (caller should fall back gracefully).
+func (s *ProjectService) GetBridgeStatus(ctx context.Context, containerID string) map[string]interface{} {
+	resp, err := s.CallBridge(ctx, containerID, "GET", "/status", nil)
+	if err != nil {
+		return nil
+	}
+	var result map[string]interface{}
+	if json.Unmarshal(resp, &result) != nil {
+		return nil
+	}
+	return result
+}
+
 func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string) (map[string]interface{}, error) {
 	project, err := s.repo.FindByID(ctx, id, userID)
 	if err != nil || project == nil || project.ContainerID == nil {
@@ -558,35 +576,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 
 	_, err = s.CallBridge(ctx, *project.ContainerID, "POST", "/config/update", bridgePayload)
 	if err == nil {
-		// Update DB record as well
-		var telegramToken string
-		if channels, ok := newConfig["channels"].(map[string]interface{}); ok {
-			if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
-				if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
-					if def, ok := accounts["default"].(map[string]interface{}); ok {
-						if val, ok := def["botToken"].(string); ok {
-							telegramToken = val
-						}
-					}
-				}
-			}
-		}
-		if telegramToken != "" {
-			var dbConfig domain.ProjectConfig
-			if project.Config != nil {
-				decrypted, err := s.enc.Decrypt(string(project.Config))
-				if err == nil {
-					_ = json.Unmarshal(decrypted, &dbConfig)
-				}
-			}
-			dbConfig.TelegramToken = telegramToken
-			configJSON, _ := json.Marshal(dbConfig)
-			encryptedConfig, err := s.enc.Encrypt(configJSON)
-			if err == nil {
-				project.Config = []byte(encryptedConfig)
-				_ = s.repo.Update(ctx, project)
-			}
-		}
+		s.syncTokenToDB(ctx, project, newConfig)
 		return nil
 	}
 
@@ -627,35 +617,8 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to restart container", err)
 	}
 
-	// Update DB record (Same logic as above)
-	var telegramToken string
-	if channels, ok := newConfig["channels"].(map[string]interface{}); ok {
-		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
-			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
-				if def, ok := accounts["default"].(map[string]interface{}); ok {
-					if val, ok := def["botToken"].(string); ok {
-						telegramToken = val
-					}
-				}
-			}
-		}
-	}
-	if telegramToken != "" {
-		var dbConfig domain.ProjectConfig
-		if project.Config != nil {
-			decrypted, err := s.enc.Decrypt(string(project.Config))
-			if err == nil {
-				_ = json.Unmarshal(decrypted, &dbConfig)
-			}
-		}
-		dbConfig.TelegramToken = telegramToken
-		configJSON, _ := json.Marshal(dbConfig)
-		encryptedConfig, err := s.enc.Encrypt(configJSON)
-		if err == nil {
-			project.Config = []byte(encryptedConfig)
-			_ = s.repo.Update(ctx, project)
-		}
-	}
+	// Sync token to DB
+	s.syncTokenToDB(ctx, project, newConfig)
 
 	return nil
 }
@@ -968,4 +931,39 @@ func sanitizeError(msg string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// syncTokenToDB extracts the telegram botToken from a runtime config map
+// and persists it to the encrypted DB config. Non-fatal on error.
+func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Project, runtimeConfig map[string]interface{}) {
+	var telegramToken string
+	if channels, ok := runtimeConfig["channels"].(map[string]interface{}); ok {
+		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
+			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
+				if def, ok := accounts["default"].(map[string]interface{}); ok {
+					if val, ok := def["botToken"].(string); ok {
+						telegramToken = val
+					}
+				}
+			}
+		}
+	}
+	if telegramToken == "" {
+		return
+	}
+
+	var dbConfig domain.ProjectConfig
+	if project.Config != nil {
+		decrypted, err := s.enc.Decrypt(string(project.Config))
+		if err == nil {
+			_ = json.Unmarshal(decrypted, &dbConfig)
+		}
+	}
+	dbConfig.TelegramToken = telegramToken
+	configJSON, _ := json.Marshal(dbConfig)
+	encryptedConfig, err := s.enc.Encrypt(configJSON)
+	if err == nil {
+		project.Config = []byte(encryptedConfig)
+		_ = s.repo.Update(ctx, project)
+	}
 }
