@@ -152,69 +152,123 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
     const [quickStats, setQuickStats] = useState<QuickStats>({ sessions: 0, channels: 0, skills: 0, memory: 0 })
     const [loading, setLoading] = useState(true)
     const [refreshing, setRefreshing] = useState(false)
+    const [agentReady, setAgentReady] = useState(false)
 
     const isRunning = project?.status === "running"
 
-    const fetchAll = useCallback(async (showRefresh = false) => {
-        if (showRefresh) setRefreshing(true)
-
-        // Only fetch monitoring data if container is running
-        if (isRunning && project?.containerId) {
-            const [statsData, healthData, doctorData, agentData, sessData, chanData, skillsData, memData] =
-                await Promise.allSettled([
-                    apiFetchJson(`/api/projects/${projectId}/stats`),
-                    apiFetchJson(`/api/projects/${projectId}/health`),
-                    apiFetchJson(`/api/projects/${projectId}/doctor`),
-                    apiFetchJson(`/api/projects/${projectId}/agent-status`),
-                    apiFetchJson(`/api/projects/${projectId}/sessions`),
-                    apiFetchJson(`/api/projects/${projectId}/channels`),
-                    apiFetchJson(`/api/projects/${projectId}/skills`),
-                    apiFetchJson(`/api/projects/${projectId}/memory`),
-                ])
-
-            const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
-
-            setStats(val(statsData))
-            setHealth(val(healthData))
-            setDoctor(val(doctorData))
-            setAgentStatus(val(agentData))
-
-            const countItems = (data: any): number => {
-                if (Array.isArray(data)) return data.length
-                if (data && typeof data === 'object') {
-                    // Could be { items: [...] } or { key: value }
-                    if (data.items) return data.items.length
-                    return Object.keys(data).length
-                }
-                return 0
-            }
-
-            setQuickStats({
-                sessions: countItems(val(sessData)),
-                channels: countItems(val(chanData)),
-                skills: countItems(val(skillsData)),
-                memory: countItems(val(memData)),
-            })
-        }
-
+    // Phase 1: Fetch only Docker-native stats (no exec needed, safe during startup)
+    const fetchStats = useCallback(async () => {
+        if (!isRunning || !project?.containerId) return
+        const data = await apiFetchJson(`/api/projects/${projectId}/stats`)
+        setStats(data)
         setLoading(false)
-        if (showRefresh) setRefreshing(false)
     }, [projectId, isRunning, project?.containerId])
 
-    useEffect(() => {
-        // Grace period: wait 10s before first poll to let OpenClaw initialize
-        const initialDelay = setTimeout(() => {
-            fetchAll()
-        }, isRunning ? 10000 : 0)
+    // Phase 2: Probe if OpenClaw sandbox is ready (single lightweight exec)
+    const probeReadiness = useCallback(async (): Promise<boolean> => {
+        if (!isRunning) return false
+        try {
+            const data = await apiFetchJson(`/api/projects/${projectId}/agent-status`)
+            if (data && typeof data === 'object' && !data.error) {
+                setAgentStatus(data)
+                setAgentReady(true)
+                return true
+            }
+        } catch { }
+        return false
+    }, [projectId, isRunning])
 
-        // Poll every 15s (reduced from 5s to avoid overwhelming the container)
-        const interval = setInterval(() => fetchAll(), 15000)
+    // Phase 3: Full monitoring (only after sandbox is confirmed ready)
+    const fetchMonitoring = useCallback(async () => {
+        if (!isRunning || !agentReady) return
 
-        return () => {
-            clearTimeout(initialDelay)
-            clearInterval(interval)
+        const [healthData, doctorData, agentData, sessData, chanData, skillsData, memData] =
+            await Promise.allSettled([
+                apiFetchJson(`/api/projects/${projectId}/health`),
+                apiFetchJson(`/api/projects/${projectId}/doctor`),
+                apiFetchJson(`/api/projects/${projectId}/agent-status`),
+                apiFetchJson(`/api/projects/${projectId}/sessions`),
+                apiFetchJson(`/api/projects/${projectId}/channels`),
+                apiFetchJson(`/api/projects/${projectId}/skills`),
+                apiFetchJson(`/api/projects/${projectId}/memory`),
+            ])
+
+        const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+
+        setHealth(val(healthData))
+        setDoctor(val(doctorData))
+        setAgentStatus(val(agentData))
+
+        const countItems = (data: any): number => {
+            if (Array.isArray(data)) return data.length
+            if (data && typeof data === 'object') {
+                if (data.items) return data.items.length
+                return Object.keys(data).length
+            }
+            return 0
         }
-    }, [fetchAll, isRunning])
+
+        setQuickStats({
+            sessions: countItems(val(sessData)),
+            channels: countItems(val(chanData)),
+            skills: countItems(val(skillsData)),
+            memory: countItems(val(memData)),
+        })
+    }, [projectId, isRunning, agentReady])
+
+    // Unified fetch for manual refresh
+    const fetchAll = useCallback(async (showRefresh = false) => {
+        if (showRefresh) setRefreshing(true)
+        await fetchStats()
+        if (agentReady) {
+            await fetchMonitoring()
+        }
+        if (showRefresh) setRefreshing(false)
+    }, [fetchStats, fetchMonitoring, agentReady])
+
+    // Polling lifecycle
+    useEffect(() => {
+        if (!isRunning) {
+            setLoading(false)
+            setAgentReady(false)
+            return
+        }
+
+        // Phase 1: Start fetching Docker stats immediately (safe, no exec)
+        fetchStats()
+
+        // Phase 2: Probe readiness every 5s until ready
+        let readinessTimer: ReturnType<typeof setInterval> | null = null
+        if (!agentReady) {
+            // Wait 8s before first probe to give OpenClaw time to boot
+            const initialProbe = setTimeout(async () => {
+                const ready = await probeReadiness()
+                if (!ready) {
+                    readinessTimer = setInterval(async () => {
+                        const ready = await probeReadiness()
+                        if (ready && readinessTimer) {
+                            clearInterval(readinessTimer)
+                            readinessTimer = null
+                        }
+                    }, 5000)
+                }
+            }, 8000)
+
+            return () => {
+                clearTimeout(initialProbe)
+                if (readinessTimer) clearInterval(readinessTimer)
+            }
+        }
+
+        // Phase 3: Full monitoring poll (only runs when agentReady=true)
+        fetchMonitoring()
+        const monitorInterval = setInterval(() => {
+            fetchStats()
+            fetchMonitoring()
+        }, 15000)
+
+        return () => clearInterval(monitorInterval)
+    }, [isRunning, agentReady, fetchStats, fetchMonitoring, probeReadiness])
 
     // Parse agent status intelligently
     const agentModel = typeof agentStatus === 'object' && agentStatus
@@ -361,6 +415,11 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
                                 <WifiOff className="h-8 w-8 mx-auto mb-2 opacity-30" />
                                 Container not running
                             </div>
+                        ) : !agentReady ? (
+                            <div className="text-center py-6 text-sm text-muted-foreground">
+                                <RefreshCw className="h-8 w-8 mx-auto mb-2 opacity-40 animate-spin" />
+                                Agent initializing...
+                            </div>
                         ) : loading ? (
                             <div className="space-y-2">
                                 <Skeleton className="h-6 w-full" />
@@ -424,6 +483,11 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
                             <div className="text-center py-6 text-sm text-muted-foreground">
                                 <WifiOff className="h-8 w-8 mx-auto mb-2 opacity-30" />
                                 Container not running
+                            </div>
+                        ) : !agentReady ? (
+                            <div className="text-center py-6 text-sm text-muted-foreground">
+                                <RefreshCw className="h-8 w-8 mx-auto mb-2 opacity-40 animate-spin" />
+                                Agent initializing...
                             </div>
                         ) : loading ? (
                             <div className="space-y-2">
