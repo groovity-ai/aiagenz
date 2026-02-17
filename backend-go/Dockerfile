@@ -23,6 +23,7 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /build/server .
 COPY --from=builder /build/migrations ./migrations
+COPY --from=builder /build/assets ./assets
 
 # Expose port
 EXPOSE 4001

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path"
 	"time"
 
@@ -27,43 +28,10 @@ type ContainerService struct {
 type ContainerInfo struct {
 	Status string `json:"status"`
 	Uptime string `json:"uptime,omitempty"`
+	IP     string `json:"ip,omitempty"`
 }
 
-const NetworkName = "aiagenz-network"
-
-// NewContainerService creates a new Docker client.
-func NewContainerService() (*ContainerService, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Docker client: %w", err)
-	}
-
-	svc := &ContainerService{cli: cli}
-
-	// Ensure shared network exists
-	if err := svc.ensureNetwork(context.Background()); err != nil {
-		log.Printf("⚠️ Failed to ensure network: %v", err)
-	}
-
-	return svc, nil
-}
-
-// ensureNetwork checks if the shared network exists, creating it if not.
-func (s *ContainerService) ensureNetwork(ctx context.Context) error {
-	networks, err := s.cli.NetworkList(ctx, network.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	for _, net := range networks {
-		if net.Name == NetworkName {
-			return nil
-		}
-	}
-
-	_, err = s.cli.NetworkCreate(ctx, NetworkName, network.CreateOptions{})
-	return err
-}
+// ...
 
 // Inspect returns the status of a container.
 func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*ContainerInfo, error) {
@@ -76,9 +44,17 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 		return &ContainerInfo{Status: "stopped"}, nil
 	}
 
+	ip := ""
+	if info.NetworkSettings != nil && info.NetworkSettings.Networks != nil {
+		if net, ok := info.NetworkSettings.Networks[NetworkName]; ok {
+			ip = net.IPAddress
+		}
+	}
+
 	return &ContainerInfo{
 		Status: info.State.Status,
 		Uptime: info.State.StartedAt,
+		IP:     ip,
 	}, nil
 }
 
@@ -88,8 +64,9 @@ type ContainerResources struct {
 	CPU      float64 // CPU count (e.g. 0.5, 1, 2)
 }
 
-// Create creates a new container with gVisor runtime and plan-based resource limits.
-func (s *ContainerService) Create(ctx context.Context, name, image string, env []string, resources ContainerResources) (string, error) {
+// Create creates a new container with gVisor runtime and plan-based resources.
+// Also mounts a persistent volume for data storage.
+func (s *ContainerService) Create(ctx context.Context, name, image string, env []string, resources ContainerResources, volumeName string) (string, error) {
 	memoryBytes := resources.MemoryMB * 1024 * 1024
 	memoryReservation := memoryBytes / 2 // 50% soft guarantee
 	nanoCPUs := int64(resources.CPU * 1e9)
@@ -102,24 +79,31 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	// We use the container name as hostname for internal DNS
 	hostname := name
 
+	hostConfig := &container.HostConfig{
+		Runtime:    "runsc",
+		AutoRemove: false, // Ensure container persists after exit for debugging
+		Resources: container.Resources{
+			Memory:            memoryBytes,
+			MemoryReservation: memoryReservation,
+			NanoCPUs:          nanoCPUs,
+		},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		NetworkMode:   container.NetworkMode(NetworkName), // Attach to shared network
+		// DNS: handled by Docker's embedded DNS (reachable via gVisor --network=host in daemon.json)
+	}
+
+	// Mount persistent volume if provided
+	if volumeName != "" {
+		hostConfig.Binds = []string{fmt.Sprintf("%s:/home/node/.openclaw", volumeName)}
+	}
+
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:    image,
 			Env:      env,
 			Hostname: hostname,
 		},
-		&container.HostConfig{
-			Runtime:    "runsc",
-			AutoRemove: false, // Ensure container persists after exit for debugging
-			Resources: container.Resources{
-				Memory:            memoryBytes,
-				MemoryReservation: memoryReservation,
-				NanoCPUs:          nanoCPUs,
-			},
-			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-			NetworkMode:   container.NetworkMode(NetworkName), // Attach to shared network
-			// DNS: handled by Docker's embedded DNS (reachable via gVisor --network=host in daemon.json)
-		},
+		hostConfig,
 		nil, nil, name,
 	)
 	if err != nil {
@@ -370,6 +354,39 @@ func (s *ContainerService) ExecCommandWithStdinAndOutput(ctx context.Context, co
 	return stdout.String(), nil
 }
 
+// ExecAsRoot runs a command as root user.
+func (s *ContainerService) ExecAsRoot(ctx context.Context, containerID string, cmd []string) error {
+	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	execConfig := container.ExecOptions{
+		Cmd:          cmd,
+		User:         "root",
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	resp, err := s.cli.ContainerExecAttach(execCtx, respID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Wait for completion
+	var stdout, stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+
+	inspectResp, err := s.cli.ContainerExecInspect(execCtx, respID.ID)
+	if err == nil && inspectResp.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, stderr.String())
+	}
+	return nil
+}
+
 // CopyToContainer copies content to a file inside the container.
 func (s *ContainerService) CopyToContainer(ctx context.Context, containerID string, destPath string, content []byte) error {
 	var buf bytes.Buffer
@@ -392,6 +409,52 @@ func (s *ContainerService) CopyToContainer(ctx context.Context, containerID stri
 	}
 
 	return s.cli.CopyToContainer(ctx, containerID, path.Dir(destPath), &buf, container.CopyToContainerOptions{})
+}
+
+// CopyDirToContainer copies a local directory to the container.
+func (s *ContainerService) CopyDirToContainer(ctx context.Context, containerID string, srcDir string, destPath string) error {
+	// Create tar stream in memory
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	// Walk directory
+	// Note: We assume flat structure or simple recursion for plugin
+	files, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("failed to read source dir: %w", err)
+	}
+
+	for _, file := range files {
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+		
+		// Read file content
+		content, err := os.ReadFile(path.Join(srcDir, file.Name()))
+		if err != nil {
+			continue
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			continue
+		}
+		header.Name = file.Name() // Relative name
+		
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err := tw.Write(content); err != nil {
+			return err
+		}
+	}
+	
+	if err := tw.Close(); err != nil {
+		return err
+	}
+
+	return s.cli.CopyToContainer(ctx, containerID, destPath, &buf, container.CopyToContainerOptions{})
 }
 
 // Stats returns CPU and memory usage for a container.

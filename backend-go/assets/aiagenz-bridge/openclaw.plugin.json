@@ -1,0 +1,13 @@
+{
+  "schema": "openclaw.plugin.v1",
+  "id": "aiagenz-bridge",
+  "name": "AiAgenz Bridge",
+  "version": "1.0.0",
+  "description": "Control Plane for AiAgenz Dashboard",
+  "main": "index.js",
+  "entry": "index.js",
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

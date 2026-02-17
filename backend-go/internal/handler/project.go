@@ -252,12 +252,32 @@ func (h *ProjectHandler) HandleCommand(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) GetAgentStatus(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
-	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"status", "--json"})
+	
+	// OPTIMIZATION: Do NOT run "openclaw status" CLI command. It's too heavy and causes hangs.
+	// Instead, just return the container status from Docker inspection.
+	// Users can check detailed status manually via logs if needed.
+	
+	// We'll mimic the response format slightly or just return basic status
+	project, err := h.svc.GetByID(r.Context(), id, userID)
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, result)
+	
+	status := "stopped"
+	if project.Status == "running" {
+		status = "running"
+	}
+	
+	// Return a lightweight JSON
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"status": status,
+		"agent": map[string]interface{}{
+			"id": "main",
+			"status": status,
+		},
+		"uptime": project.Status, // simplified
+	})
 }
 
 // GetAgentsList handles GET /projects/{id}/agents
@@ -317,6 +337,9 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DEBUG LOGGING
+	fmt.Printf("🔍 AddChannel Request: Type=%s, Config=%+v\n", req.Type, req.Config)
+
 	// APPROACH: Use Read-Modify-Write via GetRuntimeConfig/UpdateRuntimeConfig
 	// This is more reliable than 'openclaw config set' CLI which can be flaky or fail on nested paths.
 
@@ -373,7 +396,12 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		// Merge provided config into default account
 		for k, v := range req.Config {
 			if strVal, ok := v.(string); ok && strVal != "" {
-				defAccount[k] = strVal
+				// Normalize key: if key is "token", change to "botToken" for OpenClaw v2+
+				if k == "token" && req.Type == "telegram" {
+					defAccount["botToken"] = strVal
+				} else {
+					defAccount[k] = strVal
+				}
 			}
 		}
 	}
@@ -411,12 +439,49 @@ func (h *ProjectHandler) AuthAdd(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrBadRequest("key is too short"))
 		return
 	}
-	// openclaw auth add --provider <p> --key <k>
-	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"auth", "add", "--provider", req.Provider, "--key", req.Key})
+
+	// APPROACH: Direct Config Modification (More Reliable than CLI)
+	// 1. Get current config
+	config, err := h.svc.GetRuntimeConfig(r.Context(), id, userID)
 	if err != nil {
 		Error(w, err)
 		return
 	}
+
+	// 2. Initialize map structure if missing
+	if config["auth"] == nil {
+		config["auth"] = make(map[string]interface{})
+	}
+	authObj, ok := config["auth"].(map[string]interface{})
+	if !ok {
+		authObj = make(map[string]interface{})
+		config["auth"] = authObj
+	}
+
+	if authObj["profiles"] == nil {
+		authObj["profiles"] = make(map[string]interface{})
+	}
+	profiles, ok := authObj["profiles"].(map[string]interface{})
+	if !ok {
+		profiles = make(map[string]interface{})
+		authObj["profiles"] = profiles
+	}
+
+	// 3. Set Profile Key
+	// Convention: provider:default
+	profileKey := req.Provider + ":default"
+	profiles[profileKey] = map[string]interface{}{
+		"provider": req.Provider,
+		"mode":     "api_key", // Assume API Key mode for direct add
+		"key":      req.Key,
+	}
+
+	// 4. Save Config (this handles restarting container too)
+	if err := h.svc.UpdateRuntimeConfig(r.Context(), id, userID, config); err != nil {
+		Error(w, err)
+		return
+	}
+
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 

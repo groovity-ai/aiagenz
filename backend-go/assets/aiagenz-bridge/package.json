@@ -1,0 +1,9 @@
+{
+  "name": "aiagenz-bridge",
+  "version": "1.0.0",
+  "description": "Control Plane for AiAgenz Dashboard",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  }
+}

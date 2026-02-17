@@ -1,9 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -83,21 +87,30 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		return nil, domain.ErrInternal("failed to save project", err)
 	}
 
-	// Create and start Docker container with plan-based resources
+	// Create and start Docker container with plan-based resources and persistent volume
 	plan := domain.GetPlan(req.Plan)
 	resources := ContainerResources{
 		MemoryMB: 2048, // Bump to 2GB for OpenClaw stability
 		CPU:      plan.CPU,
 	}
-	containerID, err := s.container.Create(ctx, containerName, image, env, resources)
+	volumeName := fmt.Sprintf("aiagenz-data-%s", projectID)
+	containerID, err := s.container.Create(ctx, containerName, image, env, resources, volumeName)
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", nil)
 		return nil, domain.ErrInternal("failed to create container", err)
 	}
 
-	// Clean Start: Inject Minimal "Anti-Doctor" Config
-	// This prevents OpenClaw from auto-enabling Telegram and stub providers
-	minimalConfig := []byte(`{"channels": {"telegram": {"enabled": false}}}`)
+	// Clean Start: Inject Minimal Config with Bridge Enabled
+	minimalConfig := []byte(`{
+		"channels": {
+			"telegram": {"enabled": false}
+		},
+		"plugins": {
+			"entries": {
+				"aiagenz-bridge": {"enabled": true}
+			}
+		}
+	}`)
 	if err := s.container.CopyToContainer(ctx, containerID, "/home/node/.openclaw/openclaw.json", minimalConfig); err != nil {
 		// Log warning but allow startup (might be a custom image or permission issue)
 		fmt.Printf("⚠️ Failed to inject minimal config: %v\n", err)
@@ -106,6 +119,45 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	if err := s.container.Start(ctx, containerID); err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", &containerID)
 		return nil, domain.ErrInternal("failed to start container", err)
+	}
+
+	// Wait for container to be ready and stable
+	// We verify it's actually running before injecting
+	fmt.Printf("⏳ Waiting for container %s to stabilize...\n", containerName)
+	for i := 0; i < 10; i++ {
+		time.Sleep(2 * time.Second)
+		info, err := s.container.Inspect(ctx, containerID)
+		if err == nil && info.Status == "running" {
+			// Found it running! Give it another second to settle
+			time.Sleep(1 * time.Second)
+			break
+		}
+		if i == 9 {
+			fmt.Printf("⚠️ Container %s not stable after 20s, attempting injection anyway...\n", containerName)
+		}
+	}
+
+	// Inject AiAgenz Bridge Plugin
+	bridgePath := "/home/node/.openclaw/extensions/aiagenz-bridge"
+	// Ensure directory exists (as root)
+	if err := s.container.ExecAsRoot(ctx, containerID, []string{"mkdir", "-p", bridgePath}); err != nil {
+		fmt.Printf("⚠️ Failed to create bridge directory: %v\n", err)
+	} else {
+		// Copy plugin source
+		if err := s.container.CopyDirToContainer(ctx, containerID, "/app/assets/aiagenz-bridge", bridgePath); err != nil {
+			fmt.Printf("⚠️ Failed to inject bridge plugin: %v\n", err)
+		} else {
+			fmt.Println("✅ Injected AiAgenz Bridge Plugin")
+			// Fix permissions again for plugin folder
+			_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", bridgePath})
+		}
+	}
+
+	// FIX: Ensure the mounted volume AND temp directories are owned by 'node' user
+	// /tmp/jiti is used by OpenClaw for plugin compilation cache
+	if err := s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"}); err != nil {
+		// Log warning (might be non-root container or different user)
+		fmt.Printf("⚠️ Failed to fix volume permissions for %s: %v\n", containerName, err)
 	}
 
 	// Update status
@@ -163,6 +215,74 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	// Save to DB
 	if err := s.repo.Update(ctx, project); err != nil {
 		return nil, domain.ErrInternal("failed to update project", err)
+	}
+
+	// FIX: Sync changes to running container immediately
+	// If the container is running, we must update openclaw.json so the changes take effect.
+	if project.Status == "running" && project.ContainerID != nil {
+		fmt.Printf("🔄 Syncing config for project %s (Token: %s)\n", project.Name, maskSecret(currentConfig.TelegramToken))
+		
+		// Fetch current runtime config
+		runtimeConfig, err := s.GetRuntimeConfig(ctx, id, userID)
+		if err == nil {
+			// Update values in runtime config based on the new DB config
+			// 1. Telegram Token
+			if currentConfig.TelegramToken != "" {
+				fmt.Println("✅ Applying Telegram Token to Runtime Config")
+				if runtimeConfig["channels"] == nil {
+					runtimeConfig["channels"] = make(map[string]interface{})
+				}
+				channels := runtimeConfig["channels"].(map[string]interface{})
+				
+				if channels["telegram"] == nil {
+					channels["telegram"] = make(map[string]interface{})
+				}
+				telegram := channels["telegram"].(map[string]interface{})
+				telegram["enabled"] = true
+
+				if telegram["accounts"] == nil {
+					telegram["accounts"] = make(map[string]interface{})
+				}
+				accounts := telegram["accounts"].(map[string]interface{})
+
+				if accounts["default"] == nil {
+					accounts["default"] = make(map[string]interface{})
+				}
+				def := accounts["default"].(map[string]interface{})
+				
+				// Set botToken
+				def["botToken"] = currentConfig.TelegramToken
+			} else {
+				fmt.Println("⚠️ Telegram Token in DB is empty, skipping sync")
+			}
+
+			// 2. API Key / Provider (Update Auth Profiles)
+			if currentConfig.APIKey != "" && currentConfig.Provider != "" {
+				if runtimeConfig["auth"] == nil {
+					runtimeConfig["auth"] = make(map[string]interface{})
+				}
+				auth := runtimeConfig["auth"].(map[string]interface{})
+				
+				if auth["profiles"] == nil {
+					auth["profiles"] = make(map[string]interface{})
+				}
+				profiles := auth["profiles"].(map[string]interface{})
+				
+				// Standard profile key format: provider:default
+				profileKey := currentConfig.Provider + ":default"
+				profiles[profileKey] = map[string]interface{}{
+					"provider": currentConfig.Provider,
+					"mode":     "api_key",
+					"key":      currentConfig.APIKey,
+				}
+			}
+
+			// Apply update to container
+			if err := s.UpdateRuntimeConfig(ctx, id, userID, runtimeConfig); err != nil {
+				// Log error but don't fail the HTTP request since DB is updated
+				fmt.Printf("⚠️ Failed to sync config to container after update: %v\n", err)
+			}
+		}
 	}
 
 	return project, nil
@@ -280,13 +400,62 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 	return nil
 }
 
-// GetRuntimeConfig retrieves the actual openclaw.json from the running container.
+// CallBridge executes an HTTP request to the container's internal bridge plugin.
+func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, endpoint string, body interface{}) ([]byte, error) {
+	info, err := s.container.Inspect(ctx, containerID)
+	if err != nil || info.Status != "running" || info.IP == "" {
+		return nil, fmt.Errorf("container not running or ip missing")
+	}
+
+	url := fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
+	
+	var bodyReader io.Reader
+	if body != nil {
+		jsonBytes, _ := json.Marshal(body)
+		bodyReader = bytes.NewBuffer(jsonBytes)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	// Add reload header if needed (we can param this later)
+	if method == "POST" {
+		req.Header.Set("x-reload", "true")
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bridge request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}
+
+// GetRuntimeConfig retrieves config via Bridge API (with fallback to File Read).
 func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string) (map[string]interface{}, error) {
 	project, err := s.repo.FindByID(ctx, id, userID)
 	if err != nil || project == nil || project.ContainerID == nil {
 		return nil, domain.ErrNotFound("project not found or container not running")
 	}
 
+	// 1. Try Bridge API (Fast Path)
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "GET", "/config", nil)
+	if err == nil {
+		var config map[string]interface{}
+		if json.Unmarshal(resp, &config) == nil {
+			return config, nil
+		}
+	}
+	
+	// 2. Fallback: Read config file (Slow/Robust Path)
 	// Read config file (use /home/node/ not /root for consistency with running user)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
 	if err != nil {
@@ -332,7 +501,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 	return config, nil
 }
 
-// UpdateRuntimeConfig updates openclaw.json and auth-profiles.json in the container and restarts it.
+// UpdateRuntimeConfig updates config via Bridge API (with fallback to CopyToContainer).
 func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID string, newConfig map[string]interface{}) error {
 	project, err := s.repo.FindByID(ctx, id, userID)
 	if err != nil || project == nil || project.ContainerID == nil {
@@ -353,47 +522,116 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		delete(auth, "usageStats")
 	}
 
-	// 2. Ensure directory structure exists
+	// 2. Try Bridge API (Fast Path)
+	// Re-attach profiles for bridge call because bridge handles splitting internally
+	bridgePayload := deepCopyMap(configCopy)
+	if profiles != nil {
+		if bridgePayload["auth"] == nil {
+			bridgePayload["auth"] = map[string]interface{}{}
+		}
+		auth := bridgePayload["auth"].(map[string]interface{})
+		auth["profiles"] = profiles
+	}
+
+	_, err = s.CallBridge(ctx, *project.ContainerID, "POST", "/config/update", bridgePayload)
+	if err == nil {
+		// Update DB record as well
+		var telegramToken string
+		if channels, ok := newConfig["channels"].(map[string]interface{}); ok {
+			if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
+				if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
+					if def, ok := accounts["default"].(map[string]interface{}); ok {
+						if val, ok := def["botToken"].(string); ok {
+							telegramToken = val
+						}
+					}
+				}
+			}
+		}
+		if telegramToken != "" {
+			var dbConfig domain.ProjectConfig
+			if project.Config != nil {
+				decrypted, err := s.enc.Decrypt(string(project.Config))
+				if err == nil {
+					_ = json.Unmarshal(decrypted, &dbConfig)
+				}
+			}
+			dbConfig.TelegramToken = telegramToken
+			configJSON, _ := json.Marshal(dbConfig)
+			encryptedConfig, err := s.enc.Encrypt(configJSON)
+			if err == nil {
+				project.Config = []byte(encryptedConfig)
+				_ = s.repo.Update(ctx, project)
+			}
+		}
+		return nil
+	}
+
+	fmt.Printf("⚠️ Bridge update failed for %s, falling back to file copy: %v\n", id, err)
+
+	// 3. Fallback: CopyToContainer (Slow/Robust Path)
+	// Ensure directory structure exists
 	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"mkdir", "-p", "/home/node/.openclaw/agents/main/agent"}); err != nil {
 		return domain.ErrInternal("failed to create config directory", err)
 	}
 
-	// 3. Write openclaw.json via stdin pipe (proven reliable method)
+	// Write openclaw.json via CopyToContainer
 	systemConfigBytes, _ := json.MarshalIndent(configCopy, "", "  ")
 	fmt.Printf("📝 Writing openclaw.json (%d bytes) to container %s\n", len(systemConfigBytes), (*project.ContainerID)[:12])
-	writeCmd := []string{"tee", "/home/node/.openclaw/openclaw.json"}
-	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeCmd, string(systemConfigBytes)); err != nil {
+	
+	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", systemConfigBytes); err != nil {
 		fmt.Printf("❌ ERROR writing openclaw.json: %v\n", err)
 		return domain.ErrInternal("failed to write config to container", err)
 	}
 
-	// 3b. Verify the write by reading it back
-	readBack, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
-	if err != nil {
-		fmt.Printf("⚠️ WARNING: Could not verify config write: %v\n", err)
-	} else {
-		fmt.Printf("✅ Verified openclaw.json (%d bytes read back)\n", len(readBack))
-	}
-
-	// 4. Write auth-profiles.json (Credentials)
+	// Write auth-profiles.json (Credentials) via CopyToContainer
 	authStore := map[string]interface{}{
 		"version":  1,
 		"profiles": profiles,
 	}
 	authStoreBytes, _ := json.MarshalIndent(authStore, "", "  ")
-	writeAuthCmd := []string{"tee", "/home/node/.openclaw/agents/main/agent/auth-profiles.json"}
-	if err := s.container.ExecCommandWithStdin(ctx, *project.ContainerID, writeAuthCmd, string(authStoreBytes)); err != nil {
+	if err := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/agents/main/agent/auth-profiles.json", authStoreBytes); err != nil {
 		return domain.ErrInternal("failed to write auth profiles to container", err)
 	}
 
-	// 5. Fix permissions (ensure node user owns the files we just injected)
+	// Fix permissions
 	if _, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw"}); err != nil {
-		// Non-fatal: chown may fail in some container setups
+		// Non-fatal
 	}
 
-	// 6. Restart container to apply changes
+	// Restart container to apply changes
 	if err := s.container.Restart(ctx, *project.ContainerID); err != nil {
 		return domain.ErrInternal("failed to restart container", err)
+	}
+
+	// Update DB record (Same logic as above)
+	var telegramToken string
+	if channels, ok := newConfig["channels"].(map[string]interface{}); ok {
+		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
+			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
+				if def, ok := accounts["default"].(map[string]interface{}); ok {
+					if val, ok := def["botToken"].(string); ok {
+						telegramToken = val
+					}
+				}
+			}
+		}
+	}
+	if telegramToken != "" {
+		var dbConfig domain.ProjectConfig
+		if project.Config != nil {
+			decrypted, err := s.enc.Decrypt(string(project.Config))
+			if err == nil {
+				_ = json.Unmarshal(decrypted, &dbConfig)
+			}
+		}
+		dbConfig.TelegramToken = telegramToken
+		configJSON, _ := json.Marshal(dbConfig)
+		encryptedConfig, err := s.enc.Encrypt(configJSON)
+		if err == nil {
+			project.Config = []byte(encryptedConfig)
+			_ = s.repo.Update(ctx, project)
+		}
 	}
 
 	return nil
@@ -506,9 +744,45 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 		}
 	}
 
-	// Prepend "openclaw"
-	fullCmd := append([]string{"openclaw"}, args...)
+	// Prepend "openclaw" (Wait, bridge executes "openclaw" binary, so we send args only)
+	// fullCmd := append([]string{"openclaw"}, args...) // OLD
 
+	// 1. Try Bridge API (Fast Path)
+	// We send args array: ["agents", "list", ...]
+	bridgePayload := map[string]interface{}{
+		"args": args,
+	}
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/command", bridgePayload)
+	if err == nil {
+		// Parse Bridge Response
+		var bridgeResp struct {
+			Ok     bool        `json:"ok"`
+			Data   interface{} `json:"data"`
+			Error  string      `json:"error"`
+			Stdout string      `json:"stdout"`
+			Stderr string      `json:"stderr"`
+		}
+		if json.Unmarshal(resp, &bridgeResp) == nil {
+			if bridgeResp.Ok {
+				return bridgeResp.Data, nil
+			}
+			// If bridge reported error (CLI failed)
+			// Return stdout/stderr as helpful info if available
+			errMsg := bridgeResp.Error
+			if bridgeResp.Stderr != "" {
+				errMsg += ": " + bridgeResp.Stderr
+			}
+			return nil, domain.ErrInternal("cli execution failed", fmt.Errorf("%s", sanitizeError(errMsg)))
+		}
+	} else {
+		// Log warning only if not "container not running"
+		if !strings.Contains(err.Error(), "container not running") {
+			fmt.Printf("⚠️ Bridge command failed for %s: %v. Falling back to Docker Exec.\n", id, err)
+		}
+	}
+
+	// 2. Fallback: Docker Exec (Slow Path)
+	fullCmd := append([]string{"openclaw"}, args...)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, fullCmd)
 	if err != nil {
 		// SEC-3 FIX: Sanitize error before returning to client
