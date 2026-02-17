@@ -1,148 +1,139 @@
 # AiAgenz Bridge Plugin
 
-**AiAgenz Bridge** adalah plugin sistem internal (Control Plane) yang berjalan di dalam container OpenClaw (`gVisor`/Docker). Plugin ini membuka HTTP Server di port `4444` untuk memfasilitasi komunikasi **Zero-Latency** antara Backend AiAgenz (Go) dan Runtime OpenClaw (Node.js).
+**AiAgenz Bridge** adalah plugin internal (Control Plane) yang berjalan di dalam container OpenClaw. Plugin ini membuka HTTP Server di port `4444` untuk komunikasi **Zero-Latency** antara Backend AiAgenz (Go) dan Runtime OpenClaw (Node.js).
 
 ## 🏗️ Arsitektur
 
-### Masalah (Cara Lama)
-Sebelumnya, Backend menggunakan `docker exec` untuk mengontrol container:
-- **Lambat:** Setiap perintah membuat proses baru (`runc`/`containerd` overhead).
-- **Tidak Stabil:** Rawan hang pada environment `gVisor` (pipe stdin macet).
-- **Terbatas:** Tidak bisa mengakses state memori internal OpenClaw secara real-time.
+```
+Backend (Go)  →  HTTP (port 4444)  →  Bridge Plugin (JS)  →  OpenClaw Internal API
+                                                           →  File System (openclaw.json)
+                                                           →  CLI (openclaw ...)
+```
 
-### Solusi (Bridge)
-Backend berkomunikasi langsung dengan Plugin via HTTP Internal Network:
-`Backend (Go)` -> `HTTP Request (Port 4444)` -> `Plugin (JS)` -> `OpenClaw Internal API`.
+### Kenapa Bridge?
+| | Docker Exec (Lama) | Bridge (Sekarang) |
+|---|---|---|
+| **Latency** | 1-2 detik | < 10ms |
+| **Stabilitas** | Rawan hang di gVisor | HTTP stack Node.js mature |
+| **Akses Internal** | Tidak bisa | Event hooks, API context |
+| **Keamanan** | Shell injection risk | JSON-only, no shell |
 
-- **Cepat:** Latency < 10ms (vs 1-2 detik `docker exec`).
-- **Stabil:** Menggunakan stack HTTP Node.js yang mature.
-- **Aman:** Hanya listen di IP internal container, tidak terekspos ke internet.
+## 🔌 Plugin Interface
 
-## 🔌 API Reference
+Bridge menggunakan **hybrid pattern** sesuai OpenClaw best practices:
 
-Server berjalan di `http://<container-ip>:4444`.
+```javascript
+module.exports = {
+    // 1. register(api) — akses OpenClaw Plugin API
+    register(api) {
+        api.on('session:start', ...);
+        api.on('command:new', ...);
+    },
+    
+    // 2. activate(context) — start HTTP server
+    activate(context) {
+        // context.workspacePath → dynamic config paths
+        server.listen(4444);
+    },
+    
+    // 3. deactivate() — cleanup
+    deactivate() { server.close(); }
+};
+```
 
-### 1. Cek Status & Config Summary
-**GET** `/status`
+### Plugin Discovery
+- `openclaw.plugin.json` — manifest standar OpenClaw
+- `package.json` → `openclaw.extensions` field untuk auto-discovery
 
-Mendapatkan status kesehatan container dan ringkasan konfigurasi (tanpa detail sensitif).
+## � API Reference
+
+Base URL: `http://<container-ip>:4444`
+
+### GET /status
+Health check + live event data.
 
 ```json
 {
   "ok": true,
   "uptime": 120.5,
   "pid": 21,
-  "memory": { "rss": 123456, ... },
+  "memory": { "rss": 123456 },
+  "startedAt": "2026-02-17T...",
+  "hasApi": true,
+  "activeSessions": 2,
+  "recentCommands": [
+    { "command": "cli:agents list", "timestamp": "..." }
+  ],
+  "lastEvent": { "type": "session:start", "at": "..." },
   "summary": {
     "telegram": { "enabled": true, "token": "SET" },
-    "auth_profiles": ["google:default"]
+    "auth_profiles": ["google:default"],
+    "gateway_port": 3000
+  },
+  "paths": {
+    "config": "/home/node/.openclaw/openclaw.json",
+    "workspace": "/home/node/.openclaw"
   }
 }
 ```
 
-### 2. Baca Konfigurasi Lengkap
-**GET** `/config`
+### GET /config
+Full merged config (`openclaw.json` + `auth-profiles.json`).
 
-Mengambil isi file `openclaw.json` dan `auth-profiles.json` yang sedang aktif (merged). Digunakan Dashboard untuk menampilkan setting saat ini.
+### POST /config/update
+Deep merge config update. Header `x-reload: true` triggers SIGHUP reload.
 
-```json
-{
-  "channels": { ... },
-  "auth": { "profiles": { ... } },
-  "agents": { ... }
-}
-```
-
-### 3. Update Konfigurasi
-**POST** `/config/update`
-**Header:** `x-reload: true` (Optional, untuk restart otomatis setelah save)
-
-Melakukan **Deep Merge** konfigurasi baru ke `openclaw.json`. Aman untuk partial update (misal hanya update token Telegram).
-
-**Payload:**
 ```json
 {
   "channels": {
     "telegram": {
-      "accounts": {
-        "default": { "botToken": "NEW_TOKEN" }
-      }
+      "accounts": { "default": { "botToken": "NEW_TOKEN" } }
     }
   }
 }
 ```
 
-### 4. Tambah API Key (Auth)
-**POST** `/auth/add`
+### POST /auth/add
+Add auth profile to `auth-profiles.json`.
 
-Helper khusus untuk menambah profile auth secara aman ke `auth-profiles.json`.
-
-**Payload:**
 ```json
-{
-  "provider": "google",
-  "key": "sk-...",
-  "mode": "api_key"
-}
+{ "provider": "google", "key": "sk-...", "mode": "api_key" }
 ```
 
-### 5. Eksekusi CLI Command (Universal)
-**POST** `/command`
+### POST /command
+Execute `openclaw` CLI inside container (30s timeout).
 
-Menjalankan perintah CLI `openclaw` dari dalam container (sebagai user `node` yang benar).
-
-**Payload:**
 ```json
-{
-  "args": ["agents", "list", "--json"]
-}
+{ "args": ["agents", "list", "--json"] }
 ```
 
-**Response:**
-```json
-{
-  "ok": true,
-  "data": { ...parsed_json... }, // Jika output CLI adalah JSON valid
-  "stdout": "...",
-  "stderr": "..."
-}
-```
+### POST /restart
+Graceful container restart via `process.exit(0)`.
 
-## 🛠️ Implementasi
+## 🛠️ Deployment
 
-### 1. Plugin Injection (Backend Go)
-Saat Project dibuat (`Create`), Backend melakukan:
-1. Copy folder `assets/aiagenz-bridge` ke `/home/node/.openclaw/extensions/aiagenz-bridge`.
-2. Inject `openclaw.json` minimal yang meng-enable plugin ini:
+### Plugin Injection (Backend Go)
+Saat `ProjectService.Create`:
+1. Copy `assets/aiagenz-bridge/` → `/home/node/.openclaw/extensions/aiagenz-bridge/`
+2. Inject `openclaw.json` minimal dengan:
    ```json
-   "plugins": { "entries": { "aiagenz-bridge": { "enabled": true } } }
+   { "plugins": { "entries": { "aiagenz-bridge": { "enabled": true } } } }
    ```
-3. Fix permission folder agar dimiliki user `node`.
+3. Fix permission: `chown -R node:node`
 
-### 2. Kode Plugin (JS)
-Lihat `index.js`. Menggunakan module standard Node.js (`http`, `fs`, `child_process`) tanpa dependensi eksternal (`npm install` tidak diperlukan) agar ringan dan portabel.
-
-### 3. Kode Client (Go)
-Backend menggunakan helper `CallBridge`:
+### Go Client
 ```go
-func (s *ProjectService) CallBridge(ctx, containerID, method, path, body)
+resp, err := s.CallBridge(ctx, containerID, "POST", "/config/update", payload)
+// Auto-resolves container IP, sets Content-Type, 30s timeout for /command
 ```
-Fungsi ini otomatis:
-- Mencari IP Container via Docker Inspect.
-- Mengirim request HTTP dengan timeout.
-- Menangani error JSON/HTTP.
 
 ## 🐛 Troubleshooting
 
-Jika Bridge tidak bisa dihubungi (Backend fallback ke `docker exec`):
+| Masalah | Cek |
+|---|---|
+| Bridge unreachable | Log container: ada `[aiagenz-bridge] Control Plane listening`? |
+| No container IP | `docker inspect <id>` → NetworkSettings.IPAddress |
+| Plugin not loaded | Cek `openclaw.plugin.json` dan permission folder |
+| gVisor networking stuck | Restart container |
 
-1. **Cek Log Container:**
-   Apakah ada log `[aiagenz-bridge] Starting Control Plane...`?
-   Jika tidak, plugin gagal load (cek `manifest.json` atau permission folder).
-
-2. **Cek Port:**
-   Apakah container punya IP? (`docker inspect <id>`).
-   Apakah port 4444 open? (Coba `curl` dari dalam container lain di network yang sama).
-
-3. **Restart:**
-   Kadang `gVisor` networking stuck. Restart container biasanya memperbaiki masalah.
+> Bridge fallback: jika unreachable, Backend otomatis fallback ke `docker exec`.
