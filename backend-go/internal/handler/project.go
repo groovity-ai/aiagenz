@@ -318,19 +318,36 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Enable channel via config set
-	// openclaw config set channels.telegram.enabled true
 	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"config", "set", fmt.Sprintf("channels.%s.enabled", req.Type), "true"})
 	if err != nil {
 		Error(w, err)
 		return
 	}
 
-	// 2. Set config values (e.g. token)
-	if token, ok := req.Config["botToken"].(string); ok {
-		_, _ = h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"config", "set", fmt.Sprintf("channels.%s.accounts.default.botToken", req.Type), token})
+	// 2. Set ALL config values from the request (generic: works for any channel type)
+	var configErrors []string
+	for key, val := range req.Config {
+		strVal, ok := val.(string)
+		if !ok || strVal == "" {
+			continue
+		}
+		configPath := fmt.Sprintf("channels.%s.accounts.default.%s", req.Type, key)
+		_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"config", "set", configPath, strVal})
+		if err != nil {
+			configErrors = append(configErrors, fmt.Sprintf("%s: %v", key, err))
+		}
 	}
 
-	JSON(w, http.StatusOK, map[string]bool{"success": true})
+	if len(configErrors) > 0 {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"errors":  configErrors,
+			"message": "Channel enabled but some config values failed to save",
+		})
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // AuthAdd handles POST /projects/{id}/auth/add (Add API Key)

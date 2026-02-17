@@ -310,12 +310,17 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
         setSavingChannel(channelId)
         try {
             const fields = channelFields[channelId] || {}
-            await apiFetch(`/api/projects/${projectId}/channels`, {
+            const res = await apiFetch(`/api/projects/${projectId}/channels`, {
                 method: 'POST',
                 body: JSON.stringify({ type: channelId, config: fields })
             })
+            const data = await res.json().catch(() => ({ success: true }))
+            if (data.success === false) {
+                showToast(`${channelId}: ${data.message || 'Config save failed'}`, 'error')
+            } else {
+                showToast(`${channelId} channel updated!`)
+            }
             onUpdate()
-            showToast(`${channelId} channel updated!`)
             setAddingChannel(null)
         } catch (e) {
             showToast(`Failed to update ${channelId}`, 'error')
