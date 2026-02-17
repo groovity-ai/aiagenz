@@ -317,33 +317,70 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Enable channel via config set
-	_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"config", "set", fmt.Sprintf("channels.%s.enabled", req.Type), "true"})
+	// APPROACH: Use Read-Modify-Write via GetRuntimeConfig/UpdateRuntimeConfig
+	// This is more reliable than 'openclaw config set' CLI which can be flaky or fail on nested paths.
+
+	// 1. Get current config
+	config, err := h.svc.GetRuntimeConfig(r.Context(), id, userID)
 	if err != nil {
 		Error(w, err)
 		return
 	}
 
-	// 2. Set ALL config values from the request (generic: works for any channel type)
-	var configErrors []string
-	for key, val := range req.Config {
-		strVal, ok := val.(string)
-		if !ok || strVal == "" {
-			continue
+	// 2. Initialize map structure if missing (Safe Deep Map Access)
+	if config["channels"] == nil {
+		config["channels"] = make(map[string]interface{})
+	}
+	channels, ok := config["channels"].(map[string]interface{})
+	if !ok {
+		// Reset if invalid type
+		channels = make(map[string]interface{})
+		config["channels"] = channels
+	}
+
+	if channels[req.Type] == nil {
+		channels[req.Type] = make(map[string]interface{})
+	}
+	channelObj, ok := channels[req.Type].(map[string]interface{})
+	if !ok {
+		channelObj = make(map[string]interface{})
+		channels[req.Type] = channelObj
+	}
+
+	// 3. Set Enabled = true
+	channelObj["enabled"] = true
+
+	// 4. Set Config Values (accounts.default...)
+	if len(req.Config) > 0 {
+		if channelObj["accounts"] == nil {
+			channelObj["accounts"] = make(map[string]interface{})
 		}
-		configPath := fmt.Sprintf("channels.%s.accounts.default.%s", req.Type, key)
-		_, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"config", "set", configPath, strVal})
-		if err != nil {
-			configErrors = append(configErrors, fmt.Sprintf("%s: %v", key, err))
+		accounts, ok := channelObj["accounts"].(map[string]interface{})
+		if !ok {
+			accounts = make(map[string]interface{})
+			channelObj["accounts"] = accounts
+		}
+
+		if accounts["default"] == nil {
+			accounts["default"] = make(map[string]interface{})
+		}
+		defAccount, ok := accounts["default"].(map[string]interface{})
+		if !ok {
+			defAccount = make(map[string]interface{})
+			accounts["default"] = defAccount
+		}
+
+		// Merge provided config into default account
+		for k, v := range req.Config {
+			if strVal, ok := v.(string); ok && strVal != "" {
+				defAccount[k] = strVal
+			}
 		}
 	}
 
-	if len(configErrors) > 0 {
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"success": false,
-			"errors":  configErrors,
-			"message": "Channel enabled but some config values failed to save",
-		})
+	// 5. Save Config
+	if err := h.svc.UpdateRuntimeConfig(r.Context(), id, userID, config); err != nil {
+		Error(w, err)
 		return
 	}
 
