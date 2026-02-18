@@ -466,6 +466,7 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 			time.Sleep(backoff)
 		}
 
+		// 1. Try Direct HTTP (Fast Path)
 		var bodyReader io.Reader
 		if body != nil {
 			jsonBytes, _ := json.Marshal(body)
@@ -473,36 +474,56 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		if method == "POST" {
-			req.Header.Set("x-reload", "true")
-		}
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			if method == "POST" {
+				req.Header.Set("x-reload", "true")
+			}
 
-		client := &http.Client{Timeout: timeout}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("bridge request failed: %w", err)
-			continue
-		}
+			client := &http.Client{Timeout: timeout}
+			resp, err := client.Do(req)
+			if err == nil {
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
 
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
-			continue // retry on 5xx
+				if resp.StatusCode < 500 {
+					if resp.StatusCode >= 400 {
+						return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+					}
+					return respBody, nil
+				}
+				lastErr = fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+			} else {
+				lastErr = fmt.Errorf("bridge request failed: %w", err)
+			}
+		} else {
+			lastErr = err
 		}
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		return respBody, nil
 	}
 
-	return nil, lastErr
+	// 2. Fallback: Local Exec via 'curl' (Robust Path for gVisor/Network Isolation)
+	// If direct HTTP fails (e.g. due to gVisor blocking container-to-container IP or Host Loopback),
+	// we execute 'curl' INSIDE the container to hit its own 127.0.0.1 loopback.
+	log.Printf("[INFO] Bridge HTTP failed (%v), falling back to local exec curl...", lastErr)
+
+	curlCmd := []string{"curl", "-s", "-X", method}
+	curlCmd = append(curlCmd, "-H", "Content-Type: application/json")
+	if method == "POST" {
+		curlCmd = append(curlCmd, "-H", "x-reload: true")
+	}
+	if body != nil {
+		jsonBytes, _ := json.Marshal(body)
+		curlCmd = append(curlCmd, "-d", string(jsonBytes))
+	}
+	// Always use internal loopback for exec
+	curlCmd = append(curlCmd, fmt.Sprintf("http://127.0.0.1:4444%s", endpoint))
+
+	output, execErr := s.container.ExecCommand(ctx, containerID, curlCmd)
+	if execErr != nil {
+		return nil, fmt.Errorf("bridge exec failed: %w (http err: %v)", execErr, lastErr)
+	}
+
+	return []byte(output), nil
 }
 
 // GetBridgeStatus queries the bridge /status endpoint.
