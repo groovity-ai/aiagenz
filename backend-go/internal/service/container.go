@@ -251,7 +251,7 @@ func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, 
 		AttachStderr: true,
 		User:         "node",
 		WorkingDir:   "/home/node",
-		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
+		Env:          []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -305,7 +305,7 @@ func (s *ContainerService) ExecCommandWithStdin(ctx context.Context, containerID
 		AttachStderr: true,
 		User:         "node",
 		WorkingDir:   "/home/node",
-		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
+		Env:          []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -351,7 +351,7 @@ func (s *ContainerService) ExecCommandWithTimeout(ctx context.Context, container
 		AttachStderr: true,
 		User:         "node",
 		WorkingDir:   "/home/node",
-		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
+		Env:          []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -390,7 +390,7 @@ func (s *ContainerService) ExecCommandWithStdinAndOutput(ctx context.Context, co
 		AttachStderr: true,
 		User:         "node",
 		WorkingDir:   "/home/node",
-		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
+		Env:          []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
