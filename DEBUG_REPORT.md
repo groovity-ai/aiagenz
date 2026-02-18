@@ -1,141 +1,45 @@
-# DEBUG REPORT: AiAgenz gVisor Network Issue 🚨
+# AiAgenz Debug Report: Bridge Networking & Config Persistence
 
-**Date:** 2026-02-15
-**Status:** ✅ ROOT CAUSE FOUND — Fix documented below.
+**Date:** 2026-02-18
+**Status:** Partial Success (Create OK, Update Failed)
 
-## 🏗️ Architecture State
-- **Frontend:** Next.js 14 (App Router) + Shadcn UI. Running on port `3010`.
-- **Backend:** Go (Chi Router) + PostgreSQL. Running on port `4001`.
-- **Infrastructure:** Docker containers managed by Backend via `dockerode`.
-- **Security:** `runsc` (gVisor) runtime for isolation.
+## 🚨 Critical Issues
 
-## 🐛 The Critical Issue
-Newly deployed agents (`openclaw-starter:latest` running in `gVisor`) fail to connect to Telegram API.
+### 1. OpenClaw Doctor Reset
+The official `openclaw-starter` image runs a `doctor` script on startup that aggressively resets `openclaw.json` if it detects changes not matching its internal state (likely derived from initial Env Vars).
+- **Impact:** Any config file manually injected via `CopyToContainer` gets overwritten/reset on container restart.
+- **Workaround:** We switched to **Env Var Injection** (`OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN`) which the Doctor respects.
 
-**Error Log (Inside Container):**
-```
-[telegram] deleteMyCommands failed: Network request for 'deleteMyCommands' failed!
-TypeError: fetch failed
-    at node:internal/deps/undici/undici:14902:13
-```
+### 2. Bridge Plugin Timeout (gVisor Networking)
+We implemented a Bridge Plugin (HTTP Server on port 4444 inside container) to bypass `docker exec` slowness.
+- **Status:** Plugin installs and listens (`[aiagenz-bridge] Control Plane listening on 0.0.0.0:4444`).
+- **Issue:** Backend (Go) cannot connect to this port (`context deadline exceeded`).
+- **Suspect:** gVisor (`runsc`) network stack isolation prevents direct container-to-container communication on non-exposed ports, or Docker DNS issue in the custom network.
 
-**Symptoms:**
-1.  Agent starts successfully (Gateway listening).
-2.  Config is injected correctly (Token, Model Gemini Flash).
-3.  BUT outbound HTTPS requests to `api.telegram.org` fail immediately.
+### 3. Update Token Failed (Recreate Logic Bug)
+Since Bridge fails, Backend falls back to **Recreating the Container** with new Env Vars (to satisfy Doctor).
+- **Issue:** The logic to extract the *new* token from the incoming config map seems to fail.
+- **Symptom:** Container is recreated, but Env Var `OPENCLAW_CHANNELS_...` is missing/empty.
+- **Code Location:** `backend-go/internal/service/project.go` -> `UpdateRuntimeConfig`.
+  ```go
+  // Probable bug here: Type assertion or map traversal fails silently
+  if channels, ok := configCopy["channels"].(map[string]interface{}); ok { ... }
+  ```
 
-## 🔍 Root Cause Analysis
+## ✅ What Works (Current Stable State)
+- **Create Project:** Successfully injects Token via Env Var. Config persists.
+- **Custom Image:** `aiagenz-agent:latest` builds and runs correctly with custom entrypoint logic.
 
-**The problem is NOT IPv6.** It's gVisor's `netstack` blocking Docker's embedded DNS.
+## 🛠️ Next Steps for Investigation
 
-### How DNS normally works in Docker:
-```
-Container → /etc/resolv.conf (127.0.0.11) → Docker Embedded DNS → External DNS (8.8.8.8) → Resolved!
-```
+1.  **Fix Recreate Logic:**
+    - Debug why `telegramToken` extraction in `UpdateRuntimeConfig` returns empty string.
+    - Suggestion: Use a robust JSON path library or struct unmarshalling instead of deep map type assertions.
 
-### How it breaks with gVisor `netstack`:
-```
-Container (gVisor) → /etc/resolv.conf (127.0.0.11) → gVisor netstack ❌ BLOCKS ❌ → Docker DNS unreachable
-```
+2.  **Debug Bridge Network:**
+    - Try running `curl` from *inside* another container on the same network to the agent container IP.
+    - Check if `OPENCLAW_GATEWAY_BIND=auto` binds to `127.0.0.1` instead of `0.0.0.0` despite plugin code saying `0.0.0.0`.
+    - Consider using **Unix Domain Socket** mounted on volume instead of TCP if gVisor network remains flaky.
 
-gVisor implements its own isolated network stack (`netstack`) in userspace. This stack **cannot access Docker's embedded DNS server** which binds to the host's loopback interface (`127.0.0.11`). As a result:
-- `curl -v http://1.1.1.1` → ✅ Works (direct IP, no DNS needed)
-- `curl -I https://api.telegram.org` → ❌ Fails (`Could not resolve host`)
-
-### Why previous fixes didn't work:
-
-| Attempt | Why it failed |
-|---|---|
-| Custom DNS `8.8.8.8` in Docker `HostConfig.DNS` | Gets written to `/etc/resolv.conf` but gVisor's netstack intercepts and may not forward UDP/53 correctly |
-| `NODE_OPTIONS=--dns-result-order=ipv4first` | Only controls DNS result ordering AFTER resolution. DNS resolution itself is broken |
-| Clean image rebuild | Image is fine. The runtime sandbox is the problem |
-
-## ✅ THE FIX: gVisor `--network=host`
-
-Configure gVisor to use the **host's network stack** instead of its own `netstack`. This fixes DNS while **keeping gVisor's core security protections active**.
-
-### Security Impact (Multi-Tenant Safe):
-
-| Security Layer | netstack (broken) | `--network=host` (fix) | runc (no gVisor) |
-|---|:---:|:---:|:---:|
-| Syscall sandboxing (seccomp) | ✅ | ✅ | ❌ |
-| Filesystem isolation | ✅ | ✅ | ⚠️ Basic |
-| Memory-safe kernel (Go) | ✅ | ✅ | ❌ |
-| Network stack isolation | ✅ | ❌ Passthrough | ❌ |
-| Docker network isolation (iptables) | ✅ | ✅ | ✅ |
-| **DNS works?** | **❌ No** | **✅ Yes** | **✅ Yes** |
-
-> **Key Takeaway:** `--network=host` in gVisor's runtime args only affects the network stack. All other gVisor protections (syscall filtering, filesystem isolation, Go-based memory-safe kernel) remain active. Docker's iptables-based network isolation between containers also remains intact.
-
-### Step-by-Step Fix Instructions:
-
-#### 1. SSH into VPS
-```bash
-ssh user@your-vps-ip
-```
-
-#### 2. Edit Docker daemon configuration
-```bash
-sudo nano /etc/docker/daemon.json
-```
-
-Update the `runsc` runtime to include `--network=host`:
-```json
-{
-  "runtimes": {
-    "runsc": {
-      "path": "/usr/local/bin/runsc",
-      "runtimeArgs": [
-        "--network=host"
-      ]
-    }
-  }
-}
-```
-
-> ⚠️ If there are existing `runtimeArgs`, merge them. For example if `--net-raw` is already there:
-> ```json
-> "runtimeArgs": ["--network=host", "--net-raw"]
-> ```
-
-#### 3. Restart Docker daemon
-```bash
-sudo systemctl restart docker
-```
-
-#### 4. Restart all agent containers
-```bash
-# Restart all running openclaw containers
-docker ps --filter "name=aiagenz-" -q | xargs -r docker restart
-```
-
-#### 5. Verify the fix
-```bash
-# Check container logs — should NOT have "fetch failed" errors
-docker logs <container_name> --tail 50
-
-# Test DNS from inside container
-docker exec <container_name> curl -I https://api.telegram.org
-# Expected: HTTP/2 200 or 302 (any HTTP response = DNS works)
-
-# Test Telegram bot
-# Send a message to your bot on Telegram — it should respond now
-```
-
-### Optional: Cleanup app code workarounds
-
-After applying the fix, the following workarounds in `backend-go/internal/service/container.go` can be cleaned up:
-
-```diff
-  // Line 94: Remove --dns-result-order=ipv4first (no longer needed)
-- env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d --dns-result-order=ipv4first", nodeHeapMB))
-+ env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", nodeHeapMB))
-
-  // Line 116: Custom DNS no longer needed (Docker DNS now reachable)
-- DNS: []string{"103.246.107.10", "8.8.8.8"},
-```
-
-## 📦 Repository State
-- **Backend Go:** Fully functional (API, DB, Docker Control).
-- **Frontend:** Fully functional (Dashboard, Auth, Logs, Console).
-- **Docker Image:** `openclaw-starter` built & ready.
+3.  **Alternative:**
+    - If Recreate logic is fixed, Bridge might not be strictly necessary for Config updates (Recreate is safer for Doctor anyway). Bridge is still useful for CLI commands.
