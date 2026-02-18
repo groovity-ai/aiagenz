@@ -29,7 +29,7 @@ export DATABASE_URL="postgres://user:pass@localhost:5432/dbname"
 
 ### 2. Run the Backend
 ```bash
-go run cmd/api/main.go
+go run cmd/server/main.go
 ```
 
 ### 3. Debugging Features

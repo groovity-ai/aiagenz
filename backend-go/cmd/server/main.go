@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -251,6 +253,35 @@ func main() {
 }
 
 // loadDotEnv reads a .env file if it exists (simple implementation).
+// loadDotEnv reads a .env file if it exists (simple implementation).
 func loadDotEnv() {
-	// ... (Implementation remains the same as previously seen, assuming it works)
+	file, err := os.Open(".env")
+	if err != nil {
+		// .env file not present, ignore (rely on system env)
+		return
+	}
+	defer file.Close()
+
+	log.Println("📂 Loading environment from .env file...")
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if len(val) > 1 && val[0] == '"' && val[len(val)-1] == '"' {
+				val = val[1 : len(val)-1]
+			}
+			os.Setenv(key, val)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("⚠️ Error reading .env file: %v", err)
+	}
 }
