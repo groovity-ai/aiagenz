@@ -249,6 +249,9 @@ func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, 
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
+		User:         "node",
+		WorkingDir:   "/home/node",
+		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -300,6 +303,9 @@ func (s *ContainerService) ExecCommandWithStdin(ctx context.Context, containerID
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
+		User:         "node",
+		WorkingDir:   "/home/node",
+		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -343,6 +349,9 @@ func (s *ContainerService) ExecCommandWithTimeout(ctx context.Context, container
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
+		User:         "node",
+		WorkingDir:   "/home/node",
+		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
@@ -379,6 +388,9 @@ func (s *ContainerService) ExecCommandWithStdinAndOutput(ctx context.Context, co
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
+		User:         "node",
+		WorkingDir:   "/home/node",
+		Env:          []string{"HOME=/home/node", "OPENCLAW_STATE_DIR=/home/node/.openclaw"},
 	}
 	respID, err := s.cli.ContainerExecCreate(execCtx, containerID, execConfig)
 	if err != nil {
