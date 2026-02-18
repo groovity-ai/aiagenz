@@ -138,8 +138,15 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 		},
 	}
 
+	// Determine runtime: use "runsc" (gVisor) only for production security.
+	// For local dev/debugging, default to standard runtime (empty string).
+	runtime := ""
+	if os.Getenv("APP_ENV") == "production" {
+		runtime = "runsc"
+	}
+
 	hostConfig := &container.HostConfig{
-		Runtime:    "runsc",
+		Runtime:    runtime,
 		AutoRemove: false,
 		Resources: container.Resources{
 			Memory:            memoryBytes,
