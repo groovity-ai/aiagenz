@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 )
 
 // ContainerService wraps the Docker SDK for container operations.
@@ -27,12 +28,16 @@ type ContainerService struct {
 
 // ContainerInfo holds the runtime status of a container.
 type ContainerInfo struct {
-	Status string `json:"status"`
-	Uptime string `json:"uptime,omitempty"`
-	IP     string `json:"ip,omitempty"`
+	Status     string `json:"status"`
+	Uptime     string `json:"uptime,omitempty"`
+	IP         string `json:"ip,omitempty"`
+	BridgePort string `json:"bridgePort,omitempty"` // Host-mapped port for Bridge plugin
 }
 
-const NetworkName = "aiagenz-network"
+const (
+	NetworkName    = "aiagenz-network"
+	BridgeContPort = "4444/tcp" // Bridge plugin port inside container
+)
 
 // NewContainerService creates a new Docker client.
 func NewContainerService() (*ContainerService, error) {
@@ -86,10 +91,19 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 		}
 	}
 
+	// Extract host-mapped Bridge port
+	bridgePort := ""
+	if info.NetworkSettings != nil && info.NetworkSettings.Ports != nil {
+		if bindings, ok := info.NetworkSettings.Ports[nat.Port(BridgeContPort)]; ok && len(bindings) > 0 {
+			bridgePort = bindings[0].HostPort
+		}
+	}
+
 	return &ContainerInfo{
-		Status: info.State.Status,
-		Uptime: info.State.StartedAt,
-		IP:     ip,
+		Status:     info.State.Status,
+		Uptime:     info.State.StartedAt,
+		IP:         ip,
+		BridgePort: bridgePort,
 	}, nil
 }
 
@@ -100,7 +114,7 @@ type ContainerResources struct {
 }
 
 // Create creates a new container with gVisor runtime and plan-based resources.
-// Also mounts a persistent volume for data storage.
+// Also mounts a persistent volume and exposes Bridge port for host access.
 func (s *ContainerService) Create(ctx context.Context, name, image string, env []string, resources ContainerResources, volumeName string) (string, error) {
 	memoryBytes := resources.MemoryMB * 1024 * 1024
 	memoryReservation := memoryBytes / 2 // 50% soft guarantee
@@ -111,20 +125,30 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	env = append(env, fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", nodeHeapMB))
 
 	// Sanitize hostname (Docker doesn't like spaces or special chars in hostname)
-	// We use the container name as hostname for internal DNS
 	hostname := name
+
+	// Bridge port mapping: container:4444 → host:auto (bound to 127.0.0.1)
+	bridgePort := nat.Port(BridgeContPort)
+	exposedPorts := nat.PortSet{
+		bridgePort: struct{}{},
+	}
+	portBindings := nat.PortMap{
+		bridgePort: []nat.PortBinding{
+			{HostIP: "127.0.0.1", HostPort: ""}, // empty = Docker auto-assigns
+		},
+	}
 
 	hostConfig := &container.HostConfig{
 		Runtime:    "runsc",
-		AutoRemove: false, // Ensure container persists after exit for debugging
+		AutoRemove: false,
 		Resources: container.Resources{
 			Memory:            memoryBytes,
 			MemoryReservation: memoryReservation,
 			NanoCPUs:          nanoCPUs,
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-		NetworkMode:   container.NetworkMode(NetworkName), // Attach to shared network
-		// DNS: handled by Docker's embedded DNS (reachable via gVisor --network=host in daemon.json)
+		NetworkMode:   container.NetworkMode(NetworkName),
+		PortBindings:  portBindings,
 	}
 
 	// Mount persistent volume if provided
@@ -134,9 +158,10 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:    image,
-			Env:      env,
-			Hostname: hostname,
+			Image:        image,
+			Env:          env,
+			Hostname:     hostname,
+			ExposedPorts: exposedPorts,
 		},
 		hostConfig,
 		nil, nil, name,

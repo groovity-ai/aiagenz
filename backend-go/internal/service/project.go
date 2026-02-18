@@ -423,13 +423,23 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 
 // CallBridge executes an HTTP request to the container's internal bridge plugin.
 // Includes retry logic with backoff for non-command endpoints.
+// Uses host-mapped port (bypasses gVisor) when available, falls back to container IP.
 func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, endpoint string, body interface{}) ([]byte, error) {
 	info, err := s.container.Inspect(ctx, containerID)
-	if err != nil || info.Status != "running" || info.IP == "" {
-		return nil, fmt.Errorf("container not running or ip missing")
+	if err != nil || info.Status != "running" {
+		return nil, fmt.Errorf("container not running")
 	}
 
-	url := fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
+	// Prefer host-mapped port (works through gVisor port forwarding)
+	// Fallback to container IP (works in standard Docker networking)
+	var url string
+	if info.BridgePort != "" {
+		url = fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint)
+	} else if info.IP != "" {
+		url = fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
+	} else {
+		return nil, fmt.Errorf("no bridge port or IP available")
+	}
 
 	timeout := 5 * time.Second
 	if endpoint == "/command" {
