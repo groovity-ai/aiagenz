@@ -18,7 +18,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat > "$CONFIG_FILE" <<EOF
 {
   "meta": {
-    "generatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    "lastTouchedVersion": "2026.2.14",
+    "lastTouchedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   },
   "agents": {
     "defaults": {

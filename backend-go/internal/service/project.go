@@ -994,8 +994,8 @@ func (s *ProjectService) postStartSetup(ctx context.Context, containerID, contai
 		}
 	}
 
-	// 4. Wait for Bridge readiness (polls /status, max 30s)
-	s.waitForBridge(ctx, containerID, containerName, 30*time.Second)
+	// 4. Wait for Bridge readiness (polls /status, max 90s for slow startups)
+	s.waitForBridge(ctx, containerID, containerName, 90*time.Second)
 }
 
 // validateConfigUpdate performs basic sanity checks on config updates.
