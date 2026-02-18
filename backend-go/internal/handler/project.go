@@ -287,6 +287,10 @@ func (h *ProjectHandler) GetAgentStatus(w http.ResponseWriter, r *http.Request) 
 
 // GetAgentsList handles GET /projects/{id}/agents
 func (h *ProjectHandler) GetAgentsList(w http.ResponseWriter, r *http.Request) {
+	// TEMPORARY DISABLE to prevent overload
+	JSON(w, http.StatusOK, map[string]interface{}{"agents": []interface{}{}})
+	return
+	/*
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"agents", "list", "--json"})
@@ -295,10 +299,15 @@ func (h *ProjectHandler) GetAgentsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, result)
+	*/
 }
 
 // GetSessionsList handles GET /projects/{id}/sessions
 func (h *ProjectHandler) GetSessionsList(w http.ResponseWriter, r *http.Request) {
+	// TEMPORARY DISABLE to prevent overload
+	JSON(w, http.StatusOK, map[string]interface{}{"sessions": []interface{}{}})
+	return
+	/*
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"sessions", "list", "--json"})
@@ -307,6 +316,7 @@ func (h *ProjectHandler) GetSessionsList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	JSON(w, http.StatusOK, result)
+	*/
 }
 
 // GetChannels handles GET /projects/{id}/channels

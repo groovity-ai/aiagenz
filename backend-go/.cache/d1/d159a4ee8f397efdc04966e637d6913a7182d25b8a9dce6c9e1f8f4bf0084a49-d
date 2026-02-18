@@ -1,0 +1,5 @@
+./auth.go
+./container.go
+./monitor.go
+./project.go
+./subscription.go
