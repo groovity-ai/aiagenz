@@ -541,8 +541,64 @@ func (s *ProjectService) GetBridgeStatus(ctx context.Context, containerID string
 
 func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string) (map[string]interface{}, error) {
 	project, err := s.repo.FindByID(ctx, id, userID)
-	if err != nil || project == nil || project.ContainerID == nil {
-		return nil, domain.ErrNotFound("project not found or container not running")
+	if err != nil || project == nil {
+		return nil, domain.ErrNotFound("project not found")
+	}
+
+	// Helper: build config from DB (used as fallback when container is unavailable)
+	buildConfigFromDB := func() map[string]interface{} {
+		config := map[string]interface{}{}
+		if project.Config == nil {
+			return config
+		}
+		decrypted, err := s.enc.Decrypt(string(project.Config))
+		if err != nil {
+			return config
+		}
+		var dbConfig domain.ProjectConfig
+		if err := json.Unmarshal(decrypted, &dbConfig); err != nil {
+			return config
+		}
+		// Reconstruct OpenClaw-compatible config structure from DB values
+		if dbConfig.TelegramToken != "" {
+			config["channels"] = map[string]interface{}{
+				"telegram": map[string]interface{}{
+					"enabled": true,
+					"accounts": map[string]interface{}{
+						"default": map[string]interface{}{
+							"botToken": dbConfig.TelegramToken,
+						},
+					},
+				},
+			}
+		}
+		if dbConfig.Provider != "" || dbConfig.APIKey != "" {
+			profileKey := dbConfig.Provider + ":default"
+			config["auth"] = map[string]interface{}{
+				"profiles": map[string]interface{}{
+					profileKey: map[string]interface{}{
+						"type":     "api_key",
+						"provider": dbConfig.Provider,
+						"key":      dbConfig.APIKey,
+					},
+				},
+			}
+		}
+		if dbConfig.Model != "" {
+			config["agents"] = map[string]interface{}{
+				"defaults": map[string]interface{}{
+					"model": map[string]interface{}{
+						"primary": dbConfig.Model,
+					},
+				},
+			}
+		}
+		return config
+	}
+
+	// If no container, return DB config directly
+	if project.ContainerID == nil {
+		return buildConfigFromDB(), nil
 	}
 
 	// 1. Try Bridge API (Fast Path)
@@ -554,27 +610,26 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 		}
 	}
 
-	// 2. Fallback: Read config file (Slow/Robust Path)
-	// Read config file (use /home/node/ not /root for consistency with running user)
+	// 2. Fallback: Read config file via exec
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
 	if err != nil {
-		return nil, domain.ErrInternal("failed to read config from container", err)
+		// 3. Ultimate Fallback: Return config from DB when container is missing/stopped
+		log.Printf("[WARN] GetRuntimeConfig: container exec failed (%v), falling back to DB config", err)
+		return buildConfigFromDB(), nil
 	}
 
 	// Parse JSON
 	var config map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &config); err != nil {
-		return nil, domain.ErrInternal("failed to parse config JSON", err)
+		return buildConfigFromDB(), nil
 	}
 
 	// --- MERGE AUTH PROFILES & STATS FROM AGENT STORE ---
-	// Path: /home/node/.openclaw/agents/main/agent/auth-profiles.json
 	storeOutput, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/agents/main/agent/auth-profiles.json"})
 	if err == nil {
 		var store map[string]interface{}
 		if json.Unmarshal([]byte(storeOutput), &store) == nil {
 			if profiles, ok := store["profiles"].(map[string]interface{}); ok {
-				// Initialize auth structure if missing
 				if _, ok := config["auth"].(map[string]interface{}); !ok {
 					config["auth"] = map[string]interface{}{"profiles": map[string]interface{}{}}
 				}
@@ -582,13 +637,11 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 				if _, ok := authObj["profiles"].(map[string]interface{}); !ok {
 					authObj["profiles"] = map[string]interface{}{}
 				}
-
 				mainProfiles := authObj["profiles"].(map[string]interface{})
 				for k, v := range profiles {
 					mainProfiles[k] = v
 				}
 			}
-			// Pass through usage stats so UI can show health
 			if stats, ok := store["usageStats"]; ok {
 				if authObj, ok := config["auth"].(map[string]interface{}); ok {
 					authObj["usageStats"] = stats
