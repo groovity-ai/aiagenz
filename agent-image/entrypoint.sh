@@ -48,7 +48,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "accounts": {
         "default": {
           "enabled": $TELEGRAM_ENABLED,
-          "botToken": "${OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN}",
+$(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "          \"botToken\": \"$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN\","; fi)
           "groupPolicy": "allowlist",
           "allowFrom": ["*"]
         }

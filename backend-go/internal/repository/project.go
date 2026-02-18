@@ -151,10 +151,10 @@ func (r *ProjectRepository) List(ctx context.Context, userID string, page, limit
 	return projects, total, nil
 }
 
-// Delete removes a project from the database.
-func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
-	query := `DELETE FROM projects WHERE id = $1`
-	_, err := r.db.Exec(ctx, query, id)
+// Delete removes a project from the database (with user ownership check).
+func (r *ProjectRepository) Delete(ctx context.Context, id, userID string) error {
+	query := `DELETE FROM projects WHERE id = $1 AND user_id = $2`
+	_, err := r.db.Exec(ctx, query, id, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete project: %w", err)
 	}

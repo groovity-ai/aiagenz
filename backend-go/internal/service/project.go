@@ -227,7 +227,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 			// Update values in runtime config based on the new DB config
 			// 1. Telegram Token
 			if currentConfig.TelegramToken != "" {
-				fmt.Println("✅ Applying Telegram Token to Runtime Config")
+				log.Printf("[INFO] Applying Telegram Token to Runtime Config")
 				if runtimeConfig["channels"] == nil {
 					runtimeConfig["channels"] = make(map[string]interface{})
 				}
@@ -682,13 +682,14 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to recreate container", err)
 	}
 
-	// Delete existing config so entrypoint regenerates from env vars
-	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"rm", "-f", "/home/node/.openclaw/openclaw.json"})
-
 	// Start container (entrypoint will regenerate config from env vars)
 	if err := s.container.Start(ctx, newContainerID); err != nil {
 		return domain.ErrInternal("failed to start new container", err)
 	}
+
+	// Delete existing config so entrypoint regenerates from env vars on next restart
+	// NOTE: Must run AFTER Start() — can't exec into a stopped container
+	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"rm", "-f", "/home/node/.openclaw/openclaw.json"})
 
 	// Post-start: wait, perms, auth, try bridge
 	s.postStartSetup(ctx, newContainerID, containerName, profiles)
@@ -697,13 +698,18 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", bridgePayload); bridgeErr != nil {
 		log.Printf("[INFO] Bridge config push failed on recreated container (config already in env vars): %v", bridgeErr)
 
-		// Ultimate fallback: CopyToContainer the config file directly
-		configJSON, _ := json.MarshalIndent(bridgePayload, "", "  ")
-		if copyErr := s.container.CopyToContainer(ctx, newContainerID, "/home/node/.openclaw/openclaw.json", configJSON); copyErr != nil {
+		// Ultimate fallback: Read current config, merge with updates, write full config
+		currentConfig := map[string]interface{}{}
+		if output, readErr := s.container.ExecCommand(ctx, newContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"}); readErr == nil {
+			_ = json.Unmarshal([]byte(output), &currentConfig)
+		}
+		mergedConfig := deepMergeMap(currentConfig, bridgePayload)
+		fullConfigJSON, _ := json.MarshalIndent(mergedConfig, "", "  ")
+		if copyErr := s.container.CopyToContainer(ctx, newContainerID, "/home/node/.openclaw/openclaw.json", fullConfigJSON); copyErr != nil {
 			log.Printf("[WARN] CopyToContainer config also failed: %v", copyErr)
 		} else {
 			_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "node:node", "/home/node/.openclaw/openclaw.json"})
-			log.Printf("[INFO] Config injected via CopyToContainer fallback")
+			log.Printf("[INFO] Full config injected via CopyToContainer fallback")
 		}
 	}
 
@@ -893,7 +899,7 @@ func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 	if project != nil && project.ContainerID != nil {
 		_ = s.container.Remove(ctx, *project.ContainerID)
 	}
-	return s.repo.Delete(ctx, id)
+	return s.repo.Delete(ctx, id, userID)
 }
 
 func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjectRequest) []string {
@@ -938,6 +944,21 @@ func deepCopyMap(m map[string]interface{}) map[string]interface{} {
 	b, _ := json.Marshal(m)
 	var result map[string]interface{}
 	_ = json.Unmarshal(b, &result)
+	return result
+}
+
+// deepMergeMap recursively merges src into dst (src wins on conflicts).
+func deepMergeMap(dst, src map[string]interface{}) map[string]interface{} {
+	result := deepCopyMap(dst)
+	for k, v := range src {
+		if srcMap, ok := v.(map[string]interface{}); ok {
+			if dstMap, ok := result[k].(map[string]interface{}); ok {
+				result[k] = deepMergeMap(dstMap, srcMap)
+				continue
+			}
+		}
+		result[k] = v
+	}
 	return result
 }
 
@@ -1092,9 +1113,10 @@ func validateConfigUpdate(config map[string]interface{}) error {
 
 	// Validate provider names
 	validProviders := map[string]bool{
-		"openai": true, "anthropic": true, "google": true, "groq": true,
-		"deepseek": true, "openrouter": true, "xai": true, "together": true,
-		"ollama": true, "mistral": true, "cohere": true, "fireworks": true,
+		"openai": true, "anthropic": true, "google": true, "google-antigravity": true,
+		"groq": true, "deepseek": true, "openrouter": true, "xai": true,
+		"together": true, "ollama": true, "mistral": true, "cohere": true,
+		"fireworks": true,
 	}
 	if auth, ok := config["auth"].(map[string]interface{}); ok {
 		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
