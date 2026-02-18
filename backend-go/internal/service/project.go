@@ -127,43 +127,49 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		return nil, domain.ErrInternal("failed to start container", err)
 	}
 
-	// Post-start: wait for bridge, fix perms, inject auth, push config
-	profiles := initialAuth["profiles"].(map[string]interface{})
-	s.postStartSetup(ctx, containerID, containerName, profiles)
+	// Post-start (ASYNC): wait for bridge, fix perms, inject auth, push config
+	// We run this in background so the API returns "provisioning" status immediately.
+	go func() {
+		// Use a detached context for background work
+		bgCtx := context.Background()
 
-	// Push sensitive config via Bridge (fast path if Bridge is reachable)
-	if req.TelegramToken != "" || req.Model != "" {
-		configPayload := map[string]interface{}{}
-		if req.TelegramToken != "" {
-			configPayload["channels"] = map[string]interface{}{
-				"telegram": map[string]interface{}{
-					"enabled": true,
-					"accounts": map[string]interface{}{
-						"default": map[string]interface{}{
-							"botToken": req.TelegramToken,
+		profiles := initialAuth["profiles"].(map[string]interface{})
+		s.postStartSetup(bgCtx, containerID, containerName, profiles)
+
+		// Push sensitive config via Bridge (fast path if Bridge is reachable)
+		if req.TelegramToken != "" || req.Model != "" {
+			configPayload := map[string]interface{}{}
+			if req.TelegramToken != "" {
+				configPayload["channels"] = map[string]interface{}{
+					"telegram": map[string]interface{}{
+						"enabled": true,
+						"accounts": map[string]interface{}{
+							"default": map[string]interface{}{
+								"botToken": req.TelegramToken,
+							},
 						},
 					},
-				},
+				}
 			}
-		}
-		if req.Model != "" {
-			configPayload["agents"] = map[string]interface{}{
-				"defaults": map[string]interface{}{
-					"model": map[string]interface{}{
-						"primary": req.Model,
+			if req.Model != "" {
+				configPayload["agents"] = map[string]interface{}{
+					"defaults": map[string]interface{}{
+						"model": map[string]interface{}{
+							"primary": req.Model,
+						},
 					},
-				},
+				}
+			}
+			log.Printf("[INFO] Pushing initial config via Bridge for %s...", containerName)
+			if _, err := s.CallBridge(bgCtx, containerID, "POST", "/config/update", configPayload); err != nil {
+				log.Printf("[WARN] Bridge config push failed for %s: %v — config already in env vars", containerName, err)
 			}
 		}
-		if _, err := s.CallBridge(ctx, containerID, "POST", "/config/update", configPayload); err != nil {
-			log.Printf("[WARN] Bridge config push failed for %s: %v — config already in env vars", containerName, err)
-		}
-	}
 
-	// Update status
-	project.Status = "running"
-	project.ContainerID = &containerID
-	_ = s.repo.UpdateStatus(ctx, projectID, "running", &containerID)
+		// Update status to running
+		log.Printf("[INFO] Project %s provisioned successfully. Setting status to running.", projectID)
+		_ = s.repo.UpdateStatus(bgCtx, projectID, "running", &containerID)
+	}()
 
 	return project, nil
 }
@@ -1042,17 +1048,23 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 }
 
 // waitForBridge polls the Bridge /status endpoint until ready or timeout.
+// Uses adaptive backoff: 200ms initial, increasing to 2s.
 func (s *ProjectService) waitForBridge(ctx context.Context, containerID, containerName string, maxWait time.Duration) bool {
 	log.Printf("[INFO] Waiting for bridge on %s (max %v)...", containerName, maxWait)
 	deadline := time.Now().Add(maxWait)
 
+	delay := 200 * time.Millisecond
 	for time.Now().Before(deadline) {
 		_, err := s.CallBridge(ctx, containerID, "GET", "/status", nil)
 		if err == nil {
 			log.Printf("[INFO] Bridge ready on %s", containerName)
 			return true
 		}
-		time.Sleep(2 * time.Second)
+
+		time.Sleep(delay)
+		if delay < 2*time.Second {
+			delay *= 2
+		}
 	}
 
 	log.Printf("[WARN] Bridge not ready on %s after %v", containerName, maxWait)
