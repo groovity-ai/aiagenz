@@ -95,10 +95,10 @@ const handlers = {
 
             // Normalize token
             if (updates.channels?.telegram?.accounts?.default?.token) {
-                 if (!updates.channels.telegram.accounts.default.botToken) {
-                     updates.channels.telegram.accounts.default.botToken = updates.channels.telegram.accounts.default.token;
-                 }
-                 delete updates.channels.telegram.accounts.default.token;
+                if (!updates.channels.telegram.accounts.default.botToken) {
+                    updates.channels.telegram.accounts.default.botToken = updates.channels.telegram.accounts.default.token;
+                }
+                delete updates.channels.telegram.accounts.default.token;
             }
 
             const merged = mergeDeep(current, updates);
@@ -109,7 +109,7 @@ const handlers = {
             // Graceful reload
             if (req.headers['x-reload'] === 'true') {
                 setTimeout(() => {
-                     try { process.kill(process.ppid, 'SIGHUP'); } catch(e) { process.exit(0); }
+                    try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
                 }, 500);
             }
         } catch (e) {
@@ -122,13 +122,13 @@ const handlers = {
             const { provider, key, mode } = JSON.parse(body);
             const current = readJson(AUTH_PROFILES_PATH);
             if (!current.profiles) current.profiles = {};
-            current.profiles[`${provider}:default`] = { provider, mode: mode||'api_key', key };
+            current.profiles[`${provider}:default`] = { provider, mode: mode || 'api_key', key };
             writeJson(AUTH_PROFILES_PATH, current);
-            
+
             res.json({ ok: true, message: "Auth added" });
-            
+
             setTimeout(() => {
-                 try { process.kill(process.ppid, 'SIGHUP'); } catch(e) { process.exit(0); }
+                try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
             }, 500);
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -143,8 +143,57 @@ const handlers = {
                     res.status(500).json({ ok: false, error: error.message, stdout, stderr });
                 } else {
                     let data = stdout;
-                    try { data = JSON.parse(stdout); } catch(e) {}
+                    try { data = JSON.parse(stdout); } catch (e) { }
                     res.json({ ok: true, data, stderr });
+                }
+            });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    },
+
+    'POST:/auth/login': (req, res, body) => {
+        try {
+            const { provider } = JSON.parse(body);
+            if (!provider) return res.status(400).json({ ok: false, error: 'provider required' });
+
+            execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
+                { env: process.env, timeout: 15000 },
+                (error, stdout, stderr) => {
+                    if (error) {
+                        res.status(500).json({ ok: false, error: error.message, stdout, stderr });
+                    } else {
+                        res.json({ ok: true, data: stdout.trim() });
+                    }
+                }
+            );
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    },
+
+    'POST:/auth/callback': (req, res, body) => {
+        try {
+            const { provider, callbackUrl } = JSON.parse(body);
+            if (!provider || !callbackUrl) return res.status(400).json({ ok: false, error: 'provider and callbackUrl required' });
+
+            const child = require('child_process').spawn('openclaw',
+                ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
+                { env: process.env, timeout: 15000 }
+            );
+
+            let stdout = '', stderr = '';
+            child.stdout.on('data', d => stdout += d);
+            child.stderr.on('data', d => stderr += d);
+
+            // Wait briefly for the prompt, then send callback URL
+            setTimeout(() => { child.stdin.write(callbackUrl + '\n'); }, 2000);
+
+            child.on('close', (code) => {
+                if (code !== 0) {
+                    res.status(500).json({ ok: false, error: `exit code ${code}`, stdout, stderr });
+                } else {
+                    res.json({ ok: true, data: stdout.trim() });
                 }
             });
         } catch (e) {
@@ -186,7 +235,7 @@ module.exports = {
     register(api) {
         state.api = api;
         console.log('[aiagenz-bridge] Registered with OpenClaw Plugin API');
-        
+
         // Start server IMMEDIATELY on register to be ready ASAP
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`[aiagenz-bridge] Control Plane listening on 0.0.0.0:${PORT}`);
@@ -222,6 +271,6 @@ module.exports = {
         console.log('[aiagenz-bridge] Activated (Context Loaded)');
         // Server already started in register()
     },
-    
+
     async deactivate() { server.close(); }
 };

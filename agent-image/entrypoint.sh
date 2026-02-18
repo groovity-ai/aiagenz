@@ -14,7 +14,7 @@ mkdir -p "$STATE_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "⚠️ Config not found at $CONFIG_FILE. Generating initial config from Env Vars..."
     
-    # Generate default config
+    # Generate default config (no secrets — token/model pushed via Bridge after start)
     cat > "$CONFIG_FILE" <<EOF
 {
   "meta": {
@@ -23,7 +23,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "agents": {
     "defaults": {
       "model": {
-        "primary": "${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
+        "primary": "google/gemini-3-flash-preview"
       },
       "workspace": "/app/workspace"
     }
@@ -37,11 +37,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
   },
   "channels": {
     "telegram": {
-      "enabled": true,
+      "enabled": false,
       "accounts": {
         "default": {
-          "enabled": true,
-          "botToken": "${OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN}",
+          "enabled": false,
+          "botToken": "",
           "groupPolicy": "allowlist",
           "allowFrom": ["*"]
         }

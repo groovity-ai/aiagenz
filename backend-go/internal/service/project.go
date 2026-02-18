@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -48,13 +49,13 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	projectID := uuid.New().String()
 	containerName := fmt.Sprintf("aiagenz-%s", projectID)
 
-	// Determine image (Use Custom Image by default)
+	// Determine image from project type (not fragile name matching)
 	image := "aiagenz-agent:latest"
-	if strings.Contains(strings.ToLower(req.Name), "sahabatcuan") || req.Type == "marketplace" {
+	if req.Type == "marketplace" {
 		image = "sahabatcuan:latest"
 	}
 
-	// Build env vars for the container (Clean Start - No Auto Provisioning)
+	// Build env vars for the container (no secrets — those are pushed via Bridge)
 	env := s.buildEnvVars(projectID, req)
 
 	// Encrypt config before storing
@@ -75,6 +76,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		Name:          req.Name,
 		Type:          req.Type,
 		Plan:          req.Plan,
+		ImageName:     image,
 		Status:        "provisioning",
 		ContainerName: &containerName,
 		Config:        []byte(encryptedConfig),
@@ -89,12 +91,12 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	// Create and start Docker container with plan-based resources and persistent volume
 	plan := domain.GetPlan(req.Plan)
 	resources := ContainerResources{
-		MemoryMB: 2048, // Bump to 2GB for OpenClaw stability
+		MemoryMB: plan.MemoryMB,
 		CPU:      plan.CPU,
 	}
 	volumeName := fmt.Sprintf("aiagenz-data-%s", projectID)
 
-	// Create container using standard signature
+	// Create container
 	containerID, err := s.container.Create(ctx, containerName, image, env, resources, volumeName)
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", nil)
@@ -125,34 +127,37 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		return nil, domain.ErrInternal("failed to start container", err)
 	}
 
-	// Wait for container to be ready and stable
-	fmt.Printf("⏳ Waiting for container %s to stabilize...\n", containerName)
-	for i := 0; i < 10; i++ {
-		time.Sleep(2 * time.Second)
-		info, err := s.container.Inspect(ctx, containerID)
-		if err == nil && info.Status == "running" {
-			time.Sleep(1 * time.Second)
-			break
+	// Post-start: wait for bridge, fix perms, inject auth, push config
+	profiles := initialAuth["profiles"].(map[string]interface{})
+	s.postStartSetup(ctx, containerID, containerName, profiles)
+
+	// Push sensitive config via Bridge (token + model — NOT in env vars)
+	if req.TelegramToken != "" || req.Model != "" {
+		configPayload := map[string]interface{}{}
+		if req.TelegramToken != "" {
+			configPayload["channels"] = map[string]interface{}{
+				"telegram": map[string]interface{}{
+					"enabled": true,
+					"accounts": map[string]interface{}{
+						"default": map[string]interface{}{
+							"botToken": req.TelegramToken,
+						},
+					},
+				},
+			}
 		}
-	}
-
-	// FIX: Fix permissions so 'node' user can read/write state dir and /tmp (jiti cache)
-	_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"})
-
-	// Inject auth-profiles.json (Env Vars can't express generic auth profiles)
-	// Bridge plugin is already baked into the image via Dockerfile.
-	authPath := "/home/node/.openclaw/agents/main/agent"
-	if err := s.container.ExecAsRoot(ctx, containerID, []string{"mkdir", "-p", authPath}); err == nil {
-		authStoreBytes, _ := json.MarshalIndent(initialAuth, "", "  ")
-		_ = s.container.CopyToContainer(ctx, containerID, authPath+"/auth-profiles.json", authStoreBytes)
-		_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", authPath})
-	}
-
-	// Reload config via Bridge SIGHUP (faster than full container restart)
-	// Wait briefly for bridge plugin to be ready after container start
-	time.Sleep(3 * time.Second)
-	if _, err := s.CallBridge(ctx, containerID, "POST", "/config/update", map[string]interface{}{}); err != nil {
-		fmt.Printf("⚠️ Bridge reload failed, auth profiles may need manual restart: %v\n", err)
+		if req.Model != "" {
+			configPayload["agents"] = map[string]interface{}{
+				"defaults": map[string]interface{}{
+					"model": map[string]interface{}{
+						"primary": req.Model,
+					},
+				},
+			}
+		}
+		if _, err := s.CallBridge(ctx, containerID, "POST", "/config/update", configPayload); err != nil {
+			log.Printf("[WARN] Bridge config push failed for %s: %v", containerName, err)
+		}
 	}
 
 	// Update status
@@ -214,7 +219,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 
 	// FIX: Sync changes to running container immediately
 	if project.Status == "running" && project.ContainerID != nil {
-		fmt.Printf("🔄 Syncing config for project %s (Token: %s)\n", project.Name, maskSecret(currentConfig.TelegramToken))
+		log.Printf("[INFO] Syncing config for project %s (Token: %s)", project.Name, maskSecret(currentConfig.TelegramToken))
 
 		// Fetch current runtime config
 		runtimeConfig, err := s.GetRuntimeConfig(ctx, id, userID)
@@ -295,7 +300,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 
 			// Apply update to container
 			if err := s.UpdateRuntimeConfig(ctx, id, userID, runtimeConfig); err != nil {
-				fmt.Printf("⚠️ Failed to sync config to container after update: %v\n", err)
+				log.Printf("[WARN] Failed to sync config to container after update: %v", err)
 			}
 		}
 	}
@@ -363,6 +368,7 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 		Status:        status,
 		ContainerID:   project.ContainerID,
 		ContainerName: project.ContainerName,
+		ImageName:     project.ImageName,
 		CreatedAt:     project.CreatedAt,
 	}
 
@@ -416,6 +422,7 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 }
 
 // CallBridge executes an HTTP request to the container's internal bridge plugin.
+// Includes retry logic with backoff for non-command endpoints.
 func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, endpoint string, body interface{}) ([]byte, error) {
 	info, err := s.container.Inspect(ctx, containerID)
 	if err != nil || info.Status != "running" || info.IP == "" {
@@ -424,38 +431,62 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 
 	url := fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
 
-	var bodyReader io.Reader
-	if body != nil {
-		jsonBytes, _ := json.Marshal(body)
-		bodyReader = bytes.NewBuffer(jsonBytes)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if method == "POST" {
-		req.Header.Set("x-reload", "true")
-	}
-
 	timeout := 5 * time.Second
 	if endpoint == "/command" {
 		timeout = 30 * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bridge request failed: %w", err)
-	}
-	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+	// Retry config: 3 attempts for non-command endpoints, 1 for /command
+	maxAttempts := 3
+	if endpoint == "/command" {
+		maxAttempts = 1
 	}
 
-	return respBody, nil
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt) * time.Second
+			log.Printf("[INFO] Bridge retry %d/%d for %s %s (backoff %v)", attempt+1, maxAttempts, method, endpoint, backoff)
+			time.Sleep(backoff)
+		}
+
+		var bodyReader io.Reader
+		if body != nil {
+			jsonBytes, _ := json.Marshal(body)
+			bodyReader = bytes.NewBuffer(jsonBytes)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if method == "POST" {
+			req.Header.Set("x-reload", "true")
+		}
+
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("bridge request failed: %w", err)
+			continue
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+			continue // retry on 5xx
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		return respBody, nil
+	}
+
+	return nil, lastErr
 }
 
 // GetBridgeStatus queries the bridge /status endpoint.
@@ -539,6 +570,11 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrNotFound("project not found or container not running")
 	}
 
+	// Validate config before processing
+	if err := validateConfigUpdate(newConfig); err != nil {
+		return domain.ErrBadRequest(fmt.Sprintf("invalid config: %v", err))
+	}
+
 	configCopy := deepCopyMap(newConfig)
 	var profiles map[string]interface{}
 	if auth, ok := configCopy["auth"].(map[string]interface{}); ok {
@@ -566,69 +602,26 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	}
 
 	// 2. Fallback: Recreate Container (nuclear option when bridge is unreachable)
-	fmt.Printf("⚠️ Bridge update failed for %s, falling back to container recreate: %v\n", id, err)
+	log.Printf("[WARN] Bridge update failed for %s, falling back to container recreate: %v", id, err)
 
-	// Extract ALL config values for env vars (not just token)
-	var telegramToken, provider, apiKey, model string
-	if channels, ok := configCopy["channels"].(map[string]interface{}); ok {
-		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
-			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
-				if def, ok := accounts["default"].(map[string]interface{}); ok {
-					if val, ok := def["botToken"].(string); ok {
-						telegramToken = val
-					}
-				}
-			}
-		}
-	}
-	if auth, ok := newConfig["auth"].(map[string]interface{}); ok {
-		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
-			for _, v := range profs {
-				if prof, ok := v.(map[string]interface{}); ok {
-					if p, ok := prof["provider"].(string); ok && provider == "" {
-						provider = p
-					}
-					if k, ok := prof["key"].(string); ok && apiKey == "" {
-						apiKey = k
-					}
-				}
-			}
-		}
-	}
-	if agents, ok := configCopy["agents"].(map[string]interface{}); ok {
-		if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
-			if m, ok := defaults["model"].(map[string]interface{}); ok {
-				if primary, ok := m["primary"].(string); ok {
-					model = primary
-				}
-			}
-		}
-	}
+	// Build env vars (no secrets — secrets are pushed via Bridge after start)
+	newEnv := s.buildEnvVars(project.ID, nil)
 
-	// Build complete env vars with all extracted config
-	createReq := &domain.CreateProjectRequest{
-		TelegramToken: telegramToken,
-		Provider:      provider,
-		APIKey:        apiKey,
-		Model:         model,
-	}
-	newEnv := s.buildEnvVars(project.ID, createReq)
-
-	// Derive image from project type (not fragile name matching)
-	image := "aiagenz-agent:latest"
-	if project.Type == "marketplace" {
-		image = "sahabatcuan:latest"
+	// Use image from DB (not fragile name matching)
+	image := project.ImageName
+	if image == "" {
+		image = "aiagenz-agent:latest"
 	}
 
 	// Destroy old container
 	if err := s.container.Remove(ctx, *project.ContainerID); err != nil {
-		fmt.Printf("⚠️ Failed to remove old container: %v\n", err)
+		log.Printf("[WARN] Failed to remove old container: %v", err)
 	}
 
 	// Create new container
 	containerName := fmt.Sprintf("aiagenz-%s", project.ID)
 	plan := domain.GetPlan(project.Plan)
-	resources := ContainerResources{MemoryMB: 2048, CPU: plan.CPU}
+	resources := ContainerResources{MemoryMB: plan.MemoryMB, CPU: plan.CPU}
 	volumeName := fmt.Sprintf("aiagenz-data-%s", project.ID)
 
 	newContainerID, err := s.container.Create(ctx, containerName, image, newEnv, resources, volumeName)
@@ -641,37 +634,12 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to start new container", err)
 	}
 
-	// Wait for container to stabilize (same pattern as Create flow)
-	for i := 0; i < 10; i++ {
-		time.Sleep(2 * time.Second)
-		info, inspErr := s.container.Inspect(ctx, newContainerID)
-		if inspErr == nil && info.Status == "running" {
-			time.Sleep(1 * time.Second)
-			break
-		}
-	}
+	// Post-start: wait, perms, auth, reload
+	s.postStartSetup(ctx, newContainerID, containerName, profiles)
 
-	// Fix permissions
-	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"})
-
-	// Inject auth-profiles.json (bridge plugin is baked into image)
-	if profiles != nil {
-		initialAuth := map[string]interface{}{
-			"version":  1,
-			"profiles": profiles,
-		}
-		authPath := "/home/node/.openclaw/agents/main/agent"
-		if err := s.container.ExecAsRoot(ctx, newContainerID, []string{"mkdir", "-p", authPath}); err == nil {
-			authStoreBytes, _ := json.MarshalIndent(initialAuth, "", "  ")
-			_ = s.container.CopyToContainer(ctx, newContainerID, authPath+"/auth-profiles.json", authStoreBytes)
-			_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "-R", "node:node", authPath})
-		}
-	}
-
-	// Reload via Bridge SIGHUP (wait for bridge to be ready)
-	time.Sleep(3 * time.Second)
-	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", map[string]interface{}{}); bridgeErr != nil {
-		fmt.Printf("⚠️ Bridge reload failed on recreated container: %v\n", bridgeErr)
+	// Push the full config update via Bridge (now that bridge is ready)
+	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", bridgePayload); bridgeErr != nil {
+		log.Printf("[WARN] Bridge config push failed on recreated container: %v", bridgeErr)
 	}
 
 	// Update DB
@@ -796,6 +764,7 @@ func (s *ProjectService) UpdateRepo(ctx context.Context, id, userID, repoURL, we
 	return s.repo.UpdateRepo(ctx, id, repoURL, webhookSecret)
 }
 
+// OAuthGetURL starts an OAuth flow. Tries Bridge first, falls back to docker exec.
 func (s *ProjectService) OAuthGetURL(ctx context.Context, projectID, userID, provider string) (string, error) {
 	project, err := s.repo.FindByID(ctx, projectID, userID)
 	if err != nil {
@@ -804,6 +773,17 @@ func (s *ProjectService) OAuthGetURL(ctx context.Context, projectID, userID, pro
 	if project.ContainerID == nil || *project.ContainerID == "" {
 		return "", domain.ErrBadRequest("project container not running")
 	}
+
+	// Try Bridge first
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/login", map[string]interface{}{
+		"provider": provider,
+	})
+	if err == nil {
+		return string(resp), nil
+	}
+	log.Printf("[INFO] Bridge OAuth unavailable, falling back to docker exec: %v", err)
+
+	// Fallback: docker exec
 	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
 	output, err := s.container.ExecCommandWithTimeout(ctx, *project.ContainerID, cmd, 10*time.Second)
 	if output != "" {
@@ -823,6 +803,18 @@ func (s *ProjectService) OAuthSubmitCallback(ctx context.Context, projectID, use
 	if project.ContainerID == nil || *project.ContainerID == "" {
 		return "", domain.ErrBadRequest("project container not running")
 	}
+
+	// Try Bridge first
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/callback", map[string]interface{}{
+		"provider":    provider,
+		"callbackUrl": callbackURL,
+	})
+	if err == nil {
+		return string(resp), nil
+	}
+	log.Printf("[INFO] Bridge OAuth callback unavailable, falling back to docker exec: %v", err)
+
+	// Fallback: docker exec
 	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
 	output, err := s.container.ExecCommandWithStdinAndOutput(ctx, *project.ContainerID, cmd, callbackURL)
 	if err != nil {
@@ -840,6 +832,8 @@ func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 }
 
 func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjectRequest) []string {
+	// NOTE: Sensitive values (token, apiKey, model) are NOT passed via env vars.
+	// They are pushed via Bridge after container start to avoid docker inspect leaks.
 	env := []string{
 		"NODE_ENV=production",
 		"OPENCLAW_GATEWAY_PORT=18789",
@@ -848,12 +842,6 @@ func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjec
 		"OPENCLAW_GATEWAY_BIND=auto",
 		"OPENCLAW_DOCTOR=false",
 		"OPENCLAW_SKIP_DOCTOR=true",
-	}
-	if req != nil && req.TelegramToken != "" {
-		env = append(env, fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", req.TelegramToken))
-	}
-	if req != nil && req.Model != "" {
-		env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY=%s", req.Model))
 	}
 	return env
 }
@@ -953,4 +941,97 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 		project.Config = []byte(encryptedConfig)
 		_ = s.repo.Update(ctx, project)
 	}
+}
+
+// waitForBridge polls the Bridge /status endpoint until ready or timeout.
+func (s *ProjectService) waitForBridge(ctx context.Context, containerID, containerName string, maxWait time.Duration) bool {
+	log.Printf("[INFO] Waiting for bridge on %s (max %v)...", containerName, maxWait)
+	deadline := time.Now().Add(maxWait)
+
+	for time.Now().Before(deadline) {
+		_, err := s.CallBridge(ctx, containerID, "GET", "/status", nil)
+		if err == nil {
+			log.Printf("[INFO] Bridge ready on %s", containerName)
+			return true
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	log.Printf("[WARN] Bridge not ready on %s after %v", containerName, maxWait)
+	return false
+}
+
+// postStartSetup consolidates the post-start sequence used by both Create and UpdateRuntimeConfig fallback:
+// 1. Wait for container to stabilize
+// 2. Fix permissions
+// 3. Inject auth profiles
+// 4. Wait for Bridge readiness
+func (s *ProjectService) postStartSetup(ctx context.Context, containerID, containerName string, profiles map[string]interface{}) {
+	// 1. Wait for container to stabilize
+	log.Printf("[INFO] Post-start setup for %s...", containerName)
+	for i := 0; i < 10; i++ {
+		time.Sleep(2 * time.Second)
+		info, err := s.container.Inspect(ctx, containerID)
+		if err == nil && info.Status == "running" {
+			break
+		}
+	}
+
+	// 2. Fix permissions
+	_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"})
+
+	// 3. Inject auth-profiles.json
+	if len(profiles) > 0 {
+		initialAuth := map[string]interface{}{
+			"version":  1,
+			"profiles": profiles,
+		}
+		authPath := "/home/node/.openclaw/agents/main/agent"
+		if err := s.container.ExecAsRoot(ctx, containerID, []string{"mkdir", "-p", authPath}); err == nil {
+			authStoreBytes, _ := json.MarshalIndent(initialAuth, "", "  ")
+			_ = s.container.CopyToContainer(ctx, containerID, authPath+"/auth-profiles.json", authStoreBytes)
+			_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", authPath})
+		}
+	}
+
+	// 4. Wait for Bridge readiness (polls /status, max 30s)
+	s.waitForBridge(ctx, containerID, containerName, 30*time.Second)
+}
+
+// validateConfigUpdate performs basic sanity checks on config updates.
+func validateConfigUpdate(config map[string]interface{}) error {
+	// Validate telegram token format if present
+	if channels, ok := config["channels"].(map[string]interface{}); ok {
+		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
+			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
+				if def, ok := accounts["default"].(map[string]interface{}); ok {
+					if token, ok := def["botToken"].(string); ok && len(token) > 0 && len(token) < 10 {
+						return fmt.Errorf("telegram token too short (min 10 chars)")
+					}
+				}
+			}
+		}
+	}
+
+	// Validate provider names
+	validProviders := map[string]bool{
+		"openai": true, "anthropic": true, "google": true, "groq": true,
+		"deepseek": true, "openrouter": true, "xai": true, "together": true,
+		"ollama": true, "mistral": true, "cohere": true, "fireworks": true,
+	}
+	if auth, ok := config["auth"].(map[string]interface{}); ok {
+		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
+			for _, v := range profs {
+				if prof, ok := v.(map[string]interface{}); ok {
+					if provider, ok := prof["provider"].(string); ok {
+						if !validProviders[strings.ToLower(provider)] {
+							return fmt.Errorf("unknown provider: %s", provider)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }

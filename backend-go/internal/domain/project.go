@@ -16,6 +16,7 @@ type Project struct {
 	Status        string    `json:"status"`
 	ContainerID   *string   `json:"containerId,omitempty"`
 	ContainerName *string   `json:"containerName,omitempty"`
+	ImageName     string    `json:"imageName"`
 	RepoURL       *string   `json:"repoUrl,omitempty"`
 	WebhookSecret *string   `json:"webhookSecret,omitempty"`
 	Config        []byte    `json:"-"` // encrypted
@@ -48,6 +49,7 @@ type ProjectResponse struct {
 	Status        string             `json:"status"`
 	ContainerID   *string            `json:"containerId,omitempty"`
 	ContainerName *string            `json:"containerName,omitempty"`
+	ImageName     string             `json:"imageName"`
 	RepoURL       *string            `json:"repoUrl,omitempty"`
 	WebhookSecret *string            `json:"webhookSecret,omitempty"`
 	Config        *SafeProjectConfig `json:"config,omitempty"`
@@ -135,4 +137,3 @@ type UserResponse struct {
 func NewUserID() string {
 	return uuid.New().String()
 }
-
