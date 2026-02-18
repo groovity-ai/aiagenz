@@ -116,12 +116,9 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	}
 
 	// NOTE: We do NOT inject openclaw.json manually anymore.
-	// We rely on the container entrypoint to generate it from the Env Vars we provided.
+	// The container entrypoint generates it from Env Vars we provided.
 	// This ensures consistency and prevents Doctor resets.
 
-	// Ensure directory structure exists for plugins and auth
-	bridgePath := "/home/node/.openclaw/extensions/aiagenz-bridge"
-	
 	// Start container
 	if err := s.container.Start(ctx, containerID); err != nil {
 		_ = s.repo.UpdateStatus(ctx, projectID, "failed", &containerID)
@@ -138,24 +135,25 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 			break
 		}
 	}
-	
-	// Fix permissions ASAP
+
+	// FIX: Fix permissions so 'node' user can read/write state dir and /tmp (jiti cache)
 	_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"})
 
-	// Inject AiAgenz Bridge Plugin (Baked in image, just fix permission if needed)
-	// But auth profiles still need manual injection because Env Var doesn't support generic auth profiles easily
-	// Write auth-profiles.json
+	// Inject auth-profiles.json (Env Vars can't express generic auth profiles)
+	// Bridge plugin is already baked into the image via Dockerfile.
 	authPath := "/home/node/.openclaw/agents/main/agent"
-	if _, err := s.container.ExecAsRoot(ctx, containerID, []string{"mkdir", "-p", authPath}); err == nil {
+	if err := s.container.ExecAsRoot(ctx, containerID, []string{"mkdir", "-p", authPath}); err == nil {
 		authStoreBytes, _ := json.MarshalIndent(initialAuth, "", "  ")
-		s.container.CopyToContainer(ctx, containerID, authPath + "/auth-profiles.json", authStoreBytes)
+		_ = s.container.CopyToContainer(ctx, containerID, authPath+"/auth-profiles.json", authStoreBytes)
 		_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", authPath})
 	}
-	
-	// Restart one last time to load auth profiles?
-	// If entrypoint generated openclaw.json, it should be ready.
-	// But auth profiles injected AFTER start might need reload.
-	_ = s.container.Restart(ctx, containerID)
+
+	// Reload config via Bridge SIGHUP (faster than full container restart)
+	// Wait briefly for bridge plugin to be ready after container start
+	time.Sleep(3 * time.Second)
+	if _, err := s.CallBridge(ctx, containerID, "POST", "/config/update", map[string]interface{}{}); err != nil {
+		fmt.Printf("⚠️ Bridge reload failed, auth profiles may need manual restart: %v\n", err)
+	}
 
 	// Update status
 	project.Status = "running"
@@ -570,7 +568,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	fmt.Printf("⚠️ Bridge update failed for %s, falling back to file copy: %v\n", id, err)
 
 	// 2. Fallback: Recreate Container (Nuclear Option to satisfy Doctor)
-	
+
 	// Extract configs for Env Vars
 	var telegramToken string
 	if channels, ok := configCopy["channels"].(map[string]interface{}); ok {
@@ -584,7 +582,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 			}
 		}
 	}
-	
+
 	// Prepare req for buildEnvVars
 	createReq := &domain.CreateProjectRequest{
 		TelegramToken: telegramToken,
@@ -603,7 +601,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// Simplified: assuming plan starter (or fetch from project). Assuming image default.
 	resources := ContainerResources{MemoryMB: 2048, CPU: 1.0} // Default resources
 	volumeName := fmt.Sprintf("aiagenz-data-%s", project.ID)
-	image := "aiagenz-agent:latest" 
+	image := "aiagenz-agent:latest"
 	if strings.Contains(strings.ToLower(project.Name), "sahabatcuan") || project.Type == "marketplace" {
 		image = "sahabatcuan:latest"
 	}
@@ -612,7 +610,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	if err != nil {
 		return domain.ErrInternal("failed to recreate container", err)
 	}
-	
+
 	// Start
 	if err := s.container.Start(ctx, newContainerID); err != nil {
 		return domain.ErrInternal("failed to start new container", err)
@@ -622,7 +620,7 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	project.ContainerID = &newContainerID
 	project.Status = "running"
 	s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
-	
+
 	// Sync token to DB (again, to be sure)
 	s.syncTokenToDB(ctx, project, newConfig)
 

@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AiAgenz Bridge Plugin (Bake it in!)
-COPY backend-go/assets/aiagenz-bridge /app/builtin-extensions/aiagenz-bridge
+# Copy AiAgenz Bridge Plugin (baked into image for fast startup)
+COPY agent-image/extensions/aiagenz-bridge /app/builtin-extensions/aiagenz-bridge
 
 # Copy our custom entrypoint
 COPY agent-image/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -21,3 +21,5 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Environment
 ENV NODE_ENV=production
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

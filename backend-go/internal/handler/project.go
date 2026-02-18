@@ -212,14 +212,14 @@ func (h *ProjectHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
 
-	models, err := h.svc.GetAvailableModels(r.Context(), id, userID)
+	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"models", "list", "--all", "--json"})
 	if err != nil {
 		Error(w, err)
 		return
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"models": models,
+		"models": result,
 	})
 }
 
@@ -286,37 +286,15 @@ func (h *ProjectHandler) GetAgentStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetAgentsList handles GET /projects/{id}/agents
+// TODO: Re-enable when Bridge-based agent listing is stable (disabled to prevent overload)
 func (h *ProjectHandler) GetAgentsList(w http.ResponseWriter, r *http.Request) {
-	// TEMPORARY DISABLE to prevent overload
 	JSON(w, http.StatusOK, map[string]interface{}{"agents": []interface{}{}})
-	return
-	/*
-	userID := r.Context().Value(contextkeys.UserID).(string)
-	id := chi.URLParam(r, "id")
-	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"agents", "list", "--json"})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, result)
-	*/
 }
 
 // GetSessionsList handles GET /projects/{id}/sessions
+// TODO: Re-enable when Bridge-based session listing is stable (disabled to prevent overload)
 func (h *ProjectHandler) GetSessionsList(w http.ResponseWriter, r *http.Request) {
-	// TEMPORARY DISABLE to prevent overload
 	JSON(w, http.StatusOK, map[string]interface{}{"sessions": []interface{}{}})
-	return
-	/*
-	userID := r.Context().Value(contextkeys.UserID).(string)
-	id := chi.URLParam(r, "id")
-	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"sessions", "list", "--json"})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, result)
-	*/
 }
 
 // GetChannels handles GET /projects/{id}/channels

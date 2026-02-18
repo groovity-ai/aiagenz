@@ -55,7 +55,13 @@ const mergeDeep = (target = {}, source = {}) => {
     return result;
 };
 
-// --- HANDLERS ---
+// Track a command event (ring buffer, max 20)
+const trackCommand = (command) => {
+    state.recentCommands.push({ command, timestamp: new Date().toISOString() });
+    if (state.recentCommands.length > 20) state.recentCommands.shift();
+};
+
+// --- HTTP HANDLERS ---
 
 const handlers = {
     'GET:/status': (req, res) => {
@@ -150,14 +156,27 @@ const handlers = {
 // --- HTTP SERVER ---
 
 const server = http.createServer((req, res) => {
-    // ... same ...
-});
+    res.json = (data) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+    };
+    res.status = (code) => {
+        res.statusCode = code;
+        return res;
+    };
 
-const startServer = () => {
-    server.listen(PORT, '0.0.0.0', () => {
-        console.log(`[aiagenz-bridge] Control Plane listening on 0.0.0.0:${PORT}`);
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+        const urlPath = req.url.split('?')[0];
+        const key = `${req.method}:${urlPath}`;
+        if (handlers[key]) {
+            handlers[key](req, res, body);
+        } else {
+            res.status(404).json({ ok: false, error: "Not Found" });
+        }
     });
-};
+});
 
 module.exports = {
     id: "aiagenz-bridge",
@@ -169,10 +188,29 @@ module.exports = {
         console.log('[aiagenz-bridge] Registered with OpenClaw Plugin API');
         
         // Start server IMMEDIATELY on register to be ready ASAP
-        startServer();
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`[aiagenz-bridge] Control Plane listening on 0.0.0.0:${PORT}`);
+        });
 
         // Subscribe to OpenClaw events for real-time tracking
-        // ... same ...
+        try {
+            if (typeof api.on === 'function') {
+                api.on('session:start', (data) => {
+                    state.activeSessions++;
+                    state.lastEvent = { type: 'session:start', at: new Date().toISOString() };
+                });
+                api.on('session:end', (data) => {
+                    state.activeSessions = Math.max(0, state.activeSessions - 1);
+                    state.lastEvent = { type: 'session:end', at: new Date().toISOString() };
+                });
+                api.on('command:new', (data) => {
+                    trackCommand(`event:${data?.command || 'unknown'}`);
+                    state.lastEvent = { type: 'command:new', at: new Date().toISOString(), data };
+                });
+            }
+        } catch (e) {
+            console.log('[aiagenz-bridge] Event subscription failed:', e.message);
+        }
     },
 
     async activate(context) {
