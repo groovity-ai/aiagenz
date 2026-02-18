@@ -358,10 +358,12 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 	}
 
 	status := project.Status
+	ttydPort := ""
 	if project.ContainerID != nil {
 		info, _ := s.container.Inspect(ctx, *project.ContainerID)
 		if info != nil {
 			status = info.Status
+			ttydPort = info.TtydPort
 		}
 	}
 
@@ -375,6 +377,9 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 		ContainerID:   project.ContainerID,
 		ContainerName: project.ContainerName,
 		ImageName:     project.ImageName,
+		RepoURL:       project.RepoURL,
+		WebhookSecret: project.WebhookSecret,
+		TtydPort:      ttydPort,
 		CreatedAt:     project.CreatedAt,
 	}
 
@@ -405,7 +410,21 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 
 	switch action.Action {
 	case "start":
+		// Auto-Provisioning: If no container ID, create one.
+		if project.ContainerID == nil || *project.ContainerID == "" {
+			log.Printf("[INFO] Start requested but container missing. Provisioning new container for project %s...", id)
+			return s.reprovisionContainer(ctx, project)
+		}
+
 		err = s.container.Start(ctx, *project.ContainerID)
+		if err != nil {
+			// Auto-Recovery: If container ID exists but Docker says missing -> Provision new
+			if strings.Contains(err.Error(), "No such container") {
+				log.Printf("[WARN] Container %s missing in Docker. Provisioning new container...", *project.ContainerID)
+				return s.reprovisionContainer(ctx, project)
+			}
+			return domain.ErrInternal("failed to start container", err)
+		}
 	case "stop":
 		err = s.container.Stop(ctx, *project.ContainerID)
 	case "restart":
@@ -436,20 +455,20 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 		return nil, fmt.Errorf("container not running")
 	}
 
-	// Prefer host-mapped port (works through gVisor port forwarding)
-	// Fallback to container IP (works in standard Docker networking)
+	// Prefer container IP (Direct Docker Network) because backend runs inside Docker.
+	// Host-mapped port (127.0.0.1) only works if backend runs on Host (local dev).
 	var url string
-	if info.BridgePort != "" {
-		url = fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint)
-	} else if info.IP != "" {
+	if info.IP != "" {
 		url = fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
+	} else if info.BridgePort != "" {
+		url = fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint)
 	} else {
-		return nil, fmt.Errorf("no bridge port or IP available")
+		return nil, fmt.Errorf("no bridge IP or port available")
 	}
 
-	timeout := 5 * time.Second
+	timeout := 15 * time.Second
 	if endpoint == "/command" {
-		timeout = 30 * time.Second
+		timeout = 60 * time.Second
 	}
 
 	// Retry config: 3 attempts for non-command endpoints, 1 for /command
@@ -557,14 +576,108 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 	// 2. Fallback: Read config file (Slow/Robust Path)
 	// Read config file (use /home/node/ not /root for consistency with running user)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"})
+	var config map[string]interface{}
+
 	if err != nil {
-		return nil, domain.ErrInternal("failed to read config from container", err)
+		// FAIL-SAFE: If config file is missing/unreadable, use empty map to trigger reconstruction.
+		// Do NOT return here, let it fall through to reconstruction logic.
+		log.Printf("[WARN] Failed to read config from container %s (using empty default): %v", id, err)
+		config = map[string]interface{}{}
+	} else {
+		// Parse JSON if read succeeded
+		if err := json.Unmarshal([]byte(output), &config); err != nil {
+			log.Printf("[WARN] Failed to parse config JSON from container %s (using empty default): %v", id, err)
+			config = map[string]interface{}{}
+		}
 	}
 
-	// Parse JSON
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(output), &config); err != nil {
-		return nil, domain.ErrInternal("failed to parse config JSON", err)
+	// FAIL-SAFE RECONSTRUCTION: If file was missing (config is empty), reconstruct from DB
+	if len(config) == 0 {
+		log.Printf("[INFO] Runtime config empty/missing. Reconstructing STANDARD config from DB for project %s", id)
+		
+		// Decrypt DB config
+		var dbConfig domain.ProjectConfig
+		if project.Config != nil {
+			decrypted, err := s.enc.Decrypt(string(project.Config))
+			if err == nil {
+				_ = json.Unmarshal(decrypted, &dbConfig)
+			}
+		}
+
+		// 1. Base Standard Config (Mirrors OpenClaw Defaults)
+		config = map[string]interface{}{
+			"meta": map[string]interface{}{
+				"lastTouchedVersion": "2026.2.14",
+				"lastTouchedAt":      time.Now().Format(time.RFC3339),
+			},
+			"gateway": map[string]interface{}{
+				"port": 18789,
+				"mode": "local",
+				"bind": "auto",
+				"auth": map[string]interface{}{
+					"mode":  "token",
+					"token": project.ID, // Use Project ID as Gateway Token
+				},
+			},
+			"agents": map[string]interface{}{
+				"defaults": map[string]interface{}{
+					"model": map[string]interface{}{
+						"primary": "google/gemini-3-flash-preview", // Default fallback
+					},
+					"workspace": "/app/workspace",
+				},
+			},
+			"plugins": map[string]interface{}{
+				"entries": map[string]interface{}{
+					"aiagenz-bridge": map[string]interface{}{"enabled": true}, // CRITICAL
+					"telegram":       map[string]interface{}{"enabled": true},
+				},
+			},
+			"channels": map[string]interface{}{},
+			"auth": map[string]interface{}{
+				"profiles": map[string]interface{}{},
+			},
+		}
+
+		// 2. Inject Model
+		if dbConfig.Model != "" {
+			if agents, ok := config["agents"].(map[string]interface{}); ok {
+				if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
+					if model, ok := defaults["model"].(map[string]interface{}); ok {
+						model["primary"] = dbConfig.Model
+					}
+				}
+			}
+		}
+
+		// 3. Inject Telegram
+		if dbConfig.TelegramToken != "" {
+			config["channels"] = map[string]interface{}{
+				"telegram": map[string]interface{}{
+					"enabled": true,
+					"accounts": map[string]interface{}{
+						"default": map[string]interface{}{
+							"enabled":     true,
+							"botToken":    dbConfig.TelegramToken,
+							"groupPolicy": "allowlist",
+							"allowFrom":   []string{"*"},
+						},
+					},
+				},
+			}
+		}
+
+		// 4. Inject API Key (Auth Profile)
+		if dbConfig.Provider != "" && dbConfig.APIKey != "" {
+			profileKey := dbConfig.Provider + ":default"
+			auth := config["auth"].(map[string]interface{})
+			profiles := auth["profiles"].(map[string]interface{})
+			profiles[profileKey] = map[string]interface{}{
+				"provider": dbConfig.Provider,
+				"mode":     "api_key",
+				"key":      dbConfig.APIKey,
+			}
+		}
 	}
 
 	// --- MERGE AUTH PROFILES & STATS FROM AGENT STORE ---
@@ -638,138 +751,27 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return nil
 	}
 
-	// 2. Fallback: Recreate Container (nuclear option when bridge is unreachable)
-	log.Printf("[WARN] Bridge update failed for %s, falling back to container recreate: %v", id, err)
+	// 2. Fallback: Direct File Write + Restart (Safer/Faster than Recreate)
+	log.Printf("[WARN] Bridge update failed for %s, falling back to file write + restart: %v", id, err)
 
-	// Extract config values for env vars
-	var telegramToken, provider, apiKey, model string
-	if channels, ok := configCopy["channels"].(map[string]interface{}); ok {
-		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
-			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
-				if def, ok := accounts["default"].(map[string]interface{}); ok {
-					if val, ok := def["botToken"].(string); ok {
-						telegramToken = val
-					}
-				}
-			}
-		}
+	// Prepare config for openclaw.json
+	fullConfigJSON, _ := json.MarshalIndent(configCopy, "", "  ")
+	
+	// Write file directly
+	if copyErr := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", fullConfigJSON); copyErr != nil {
+		return domain.ErrInternal("failed to write config file", copyErr)
 	}
-	if auth, ok := newConfig["auth"].(map[string]interface{}); ok {
-		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
-			for _, v := range profs {
-				if prof, ok := v.(map[string]interface{}); ok {
-					if p, ok := prof["provider"].(string); ok && provider == "" {
-						provider = p
-					}
-					if k, ok := prof["key"].(string); ok && apiKey == "" {
-						apiKey = k
-					}
-				}
-			}
-		}
-	}
-	if agents, ok := configCopy["agents"].(map[string]interface{}); ok {
-		if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
-			if m, ok := defaults["model"].(map[string]interface{}); ok {
-				if primary, ok := m["primary"].(string); ok {
-					model = primary
-				}
-			}
-		}
+	
+	// Note: We skip explicit chown here because ExecAsRoot fails on stopped containers.
+	// The container entrypoint.sh handles 'chown -R node:node' on startup anyway.
+
+	// Restart container to pick up changes
+	if restartErr := s.container.Restart(ctx, *project.ContainerID); restartErr != nil {
+		return domain.ErrInternal("failed to restart container", restartErr)
 	}
 
-	// Build env vars WITH all extracted secrets
-	createReq := &domain.CreateProjectRequest{
-		TelegramToken: telegramToken,
-		Provider:      provider,
-		APIKey:        apiKey,
-		Model:         model,
-	}
-	newEnv := s.buildEnvVars(project.ID, createReq)
-
-	// Use image from DB
-	image := project.ImageName
-	if image == "" {
-		image = "aiagenz-agent:latest"
-	}
-
-	// Destroy old container
-	if err := s.container.Remove(ctx, *project.ContainerID); err != nil {
-		log.Printf("[WARN] Failed to remove old container: %v", err)
-	}
-
-	// Create new container
-	containerName := fmt.Sprintf("aiagenz-%s", project.ID)
-	plan := domain.GetPlan(project.Plan)
-	resources := ContainerResources{MemoryMB: plan.MemoryMB, CPU: plan.CPU}
-	volumeName := fmt.Sprintf("aiagenz-data-%s", project.ID)
-
-	newContainerID, err := s.container.Create(ctx, containerName, image, newEnv, resources, volumeName)
-	if err != nil {
-		return domain.ErrInternal("failed to recreate container", err)
-	}
-
-	// Start container (entrypoint will regenerate config from env vars)
-	if err := s.container.Start(ctx, newContainerID); err != nil {
-		return domain.ErrInternal("failed to start new container", err)
-	}
-
-	// Delete existing config so entrypoint regenerates from env vars on next restart
-	// NOTE: Must run AFTER Start() — can't exec into a stopped container
-	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"rm", "-f", "/home/node/.openclaw/openclaw.json"})
-
-	// Post-start: wait, perms, auth, try bridge
-	s.postStartSetup(ctx, newContainerID, containerName, profiles)
-
-	// Try Bridge push (bonus — may fail on gVisor, but config is already in from env vars)
-	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", bridgePayload); bridgeErr != nil {
-		log.Printf("[INFO] Bridge config push failed on recreated container (config already in env vars): %v", bridgeErr)
-
-		// Ultimate fallback: Read current config, merge with updates, write full config
-		currentConfig := map[string]interface{}{}
-		if output, readErr := s.container.ExecCommand(ctx, newContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"}); readErr == nil {
-			_ = json.Unmarshal([]byte(output), &currentConfig)
-		}
-
-		// Clean profiles for openclaw.json (keep only metadata, remove keys)
-		cleanProfiles := make(map[string]interface{})
-		if profiles != nil {
-			for pk, pv := range profiles {
-				if prof, ok := pv.(map[string]interface{}); ok {
-					cleanProf := deepCopyMap(prof)
-					delete(cleanProf, "key")   // Remove API Key
-					delete(cleanProf, "token") // Remove other tokens if any
-					cleanProfiles[pk] = cleanProf
-				}
-			}
-		}
-
-		// Prepare config for openclaw.json
-		gatewayConfig := deepCopyMap(configCopy)
-		if len(cleanProfiles) > 0 {
-			if gatewayConfig["auth"] == nil {
-				gatewayConfig["auth"] = make(map[string]interface{})
-			}
-			auth := gatewayConfig["auth"].(map[string]interface{})
-			auth["profiles"] = cleanProfiles
-		}
-
-		mergedConfig := deepMergeMap(currentConfig, gatewayConfig)
-		fullConfigJSON, _ := json.MarshalIndent(mergedConfig, "", "  ")
-		if copyErr := s.container.CopyToContainer(ctx, newContainerID, "/home/node/.openclaw/openclaw.json", fullConfigJSON); copyErr != nil {
-			log.Printf("[WARN] CopyToContainer config also failed: %v", copyErr)
-		} else {
-			_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "node:node", "/home/node/.openclaw/openclaw.json"})
-			log.Printf("[INFO] Full config injected via CopyToContainer fallback")
-		}
-	}
-
-	// Update DB
-	project.ContainerID = &newContainerID
-	project.Status = "running"
-	_ = s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
+	// Update DB Status
 	s.syncTokenToDB(ctx, project, newConfig)
-
 	return nil
 }
 
@@ -951,6 +953,76 @@ func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 		_ = s.container.Remove(ctx, *project.ContainerID)
 	}
 	return s.repo.Delete(ctx, id, userID)
+}
+
+// reprovisionContainer creates a fresh container for an existing project.
+func (s *ProjectService) reprovisionContainer(ctx context.Context, project *domain.Project) error {
+	// 1. Decrypt Config to rebuild Env Vars
+	var currentConfig domain.ProjectConfig
+	if project.Config != nil {
+		decrypted, err := s.enc.Decrypt(string(project.Config))
+		if err == nil {
+			_ = json.Unmarshal(decrypted, &currentConfig)
+		}
+	}
+
+	// 2. Build Env Vars
+	createReq := &domain.CreateProjectRequest{
+		TelegramToken: currentConfig.TelegramToken,
+		Provider:      currentConfig.Provider,
+		APIKey:        currentConfig.APIKey,
+		Model:         currentConfig.Model,
+	}
+	env := s.buildEnvVars(project.ID, createReq)
+
+	// 3. Prepare Image & Resources
+	image := project.ImageName
+	if image == "" {
+		image = "aiagenz-agent:latest"
+	}
+	plan := domain.GetPlan(project.Plan)
+	resources := ContainerResources{MemoryMB: plan.MemoryMB, CPU: plan.CPU}
+	volumeName := fmt.Sprintf("aiagenz-data-%s", project.ID)
+	containerName := fmt.Sprintf("aiagenz-%s", project.ID)
+
+	// 4. Create Container
+	// Handle zombie/conflict first
+	// Force remove by name (ignoring error if not exists)
+	// Note: s.container.Remove takes ID, but Docker API allows Name.
+	_ = s.container.Stop(ctx, containerName)
+	_ = s.container.Remove(ctx, containerName)
+
+	containerID, err := s.container.Create(ctx, containerName, image, env, resources, volumeName)
+	if err != nil {
+		return domain.ErrInternal("failed to recreate container", err)
+	}
+
+	// 5. Start Container
+	if err := s.container.Start(ctx, containerID); err != nil {
+		return domain.ErrInternal("failed to start new container", err)
+	}
+
+	// 6. Post-Start Setup
+	// Build auth profiles map for injection
+	profiles := make(map[string]interface{})
+	if currentConfig.Provider != "" && currentConfig.APIKey != "" {
+		profileKey := currentConfig.Provider + ":default"
+		profiles[profileKey] = map[string]interface{}{
+			"provider": currentConfig.Provider,
+			"mode":     "api_key",
+			"key":      currentConfig.APIKey,
+		}
+	}
+
+	go func() {
+		bgCtx := context.Background()
+		s.postStartSetup(bgCtx, containerID, containerName, profiles)
+	}()
+
+	// 7. Update DB
+	project.ContainerID = &containerID
+	project.Status = "running"
+	return s.repo.UpdateStatus(ctx, project.ID, "running", &containerID)
 }
 
 func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjectRequest) []string {

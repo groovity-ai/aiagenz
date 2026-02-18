@@ -53,6 +53,7 @@ type ProjectResponse struct {
 	RepoURL       *string            `json:"repoUrl,omitempty"`
 	WebhookSecret *string            `json:"webhookSecret,omitempty"`
 	Config        *SafeProjectConfig `json:"config,omitempty"`
+	TtydPort      string             `json:"ttydPort,omitempty"` // Exposed host port for web terminal
 	CreatedAt     time.Time          `json:"createdAt"`
 }
 

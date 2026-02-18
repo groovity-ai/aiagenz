@@ -75,4 +75,5 @@ volumes:
 
 networks:
   aiagenz-network:
-    driver: bridge
+    name: aiagenz-network
+    external: true
