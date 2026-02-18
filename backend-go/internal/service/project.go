@@ -131,7 +131,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	profiles := initialAuth["profiles"].(map[string]interface{})
 	s.postStartSetup(ctx, containerID, containerName, profiles)
 
-	// Push sensitive config via Bridge (token + model — NOT in env vars)
+	// Push sensitive config via Bridge (fast path if Bridge is reachable)
 	if req.TelegramToken != "" || req.Model != "" {
 		configPayload := map[string]interface{}{}
 		if req.TelegramToken != "" {
@@ -156,7 +156,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 			}
 		}
 		if _, err := s.CallBridge(ctx, containerID, "POST", "/config/update", configPayload); err != nil {
-			log.Printf("[WARN] Bridge config push failed for %s: %v", containerName, err)
+			log.Printf("[WARN] Bridge config push failed for %s: %v — config already in env vars", containerName, err)
 		}
 	}
 
@@ -604,10 +604,53 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 2. Fallback: Recreate Container (nuclear option when bridge is unreachable)
 	log.Printf("[WARN] Bridge update failed for %s, falling back to container recreate: %v", id, err)
 
-	// Build env vars (no secrets — secrets are pushed via Bridge after start)
-	newEnv := s.buildEnvVars(project.ID, nil)
+	// Extract config values for env vars
+	var telegramToken, provider, apiKey, model string
+	if channels, ok := configCopy["channels"].(map[string]interface{}); ok {
+		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
+			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
+				if def, ok := accounts["default"].(map[string]interface{}); ok {
+					if val, ok := def["botToken"].(string); ok {
+						telegramToken = val
+					}
+				}
+			}
+		}
+	}
+	if auth, ok := newConfig["auth"].(map[string]interface{}); ok {
+		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
+			for _, v := range profs {
+				if prof, ok := v.(map[string]interface{}); ok {
+					if p, ok := prof["provider"].(string); ok && provider == "" {
+						provider = p
+					}
+					if k, ok := prof["key"].(string); ok && apiKey == "" {
+						apiKey = k
+					}
+				}
+			}
+		}
+	}
+	if agents, ok := configCopy["agents"].(map[string]interface{}); ok {
+		if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
+			if m, ok := defaults["model"].(map[string]interface{}); ok {
+				if primary, ok := m["primary"].(string); ok {
+					model = primary
+				}
+			}
+		}
+	}
 
-	// Use image from DB (not fragile name matching)
+	// Build env vars WITH all extracted secrets
+	createReq := &domain.CreateProjectRequest{
+		TelegramToken: telegramToken,
+		Provider:      provider,
+		APIKey:        apiKey,
+		Model:         model,
+	}
+	newEnv := s.buildEnvVars(project.ID, createReq)
+
+	// Use image from DB
 	image := project.ImageName
 	if image == "" {
 		image = "aiagenz-agent:latest"
@@ -629,17 +672,29 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return domain.ErrInternal("failed to recreate container", err)
 	}
 
-	// Start container
+	// Delete existing config so entrypoint regenerates from env vars
+	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"rm", "-f", "/home/node/.openclaw/openclaw.json"})
+
+	// Start container (entrypoint will regenerate config from env vars)
 	if err := s.container.Start(ctx, newContainerID); err != nil {
 		return domain.ErrInternal("failed to start new container", err)
 	}
 
-	// Post-start: wait, perms, auth, reload
+	// Post-start: wait, perms, auth, try bridge
 	s.postStartSetup(ctx, newContainerID, containerName, profiles)
 
-	// Push the full config update via Bridge (now that bridge is ready)
+	// Try Bridge push (bonus — may fail on gVisor, but config is already in from env vars)
 	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", bridgePayload); bridgeErr != nil {
-		log.Printf("[WARN] Bridge config push failed on recreated container: %v", bridgeErr)
+		log.Printf("[INFO] Bridge config push failed on recreated container (config already in env vars): %v", bridgeErr)
+
+		// Ultimate fallback: CopyToContainer the config file directly
+		configJSON, _ := json.MarshalIndent(bridgePayload, "", "  ")
+		if copyErr := s.container.CopyToContainer(ctx, newContainerID, "/home/node/.openclaw/openclaw.json", configJSON); copyErr != nil {
+			log.Printf("[WARN] CopyToContainer config also failed: %v", copyErr)
+		} else {
+			_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "node:node", "/home/node/.openclaw/openclaw.json"})
+			log.Printf("[INFO] Config injected via CopyToContainer fallback")
+		}
 	}
 
 	// Update DB
@@ -832,8 +887,8 @@ func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
 }
 
 func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjectRequest) []string {
-	// NOTE: Sensitive values (token, apiKey, model) are NOT passed via env vars.
-	// They are pushed via Bridge after container start to avoid docker inspect leaks.
+	// Env vars are the PRIMARY config injection path (works even when Bridge is unreachable).
+	// Bridge is used as a BONUS fast-path for runtime updates when networking allows.
 	env := []string{
 		"NODE_ENV=production",
 		"OPENCLAW_GATEWAY_PORT=18789",
@@ -842,6 +897,18 @@ func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjec
 		"OPENCLAW_GATEWAY_BIND=auto",
 		"OPENCLAW_DOCTOR=false",
 		"OPENCLAW_SKIP_DOCTOR=true",
+	}
+	if req != nil && req.TelegramToken != "" {
+		env = append(env, fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", req.TelegramToken))
+	}
+	if req != nil && req.Model != "" {
+		env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY=%s", req.Model))
+	}
+	if req != nil && req.APIKey != "" {
+		env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_API_KEY=%s", req.APIKey))
+	}
+	if req != nil && req.Provider != "" {
+		env = append(env, fmt.Sprintf("OPENCLAW_AGENTS_DEFAULTS_PROVIDER=%s", req.Provider))
 	}
 	return env
 }

@@ -14,7 +14,13 @@ mkdir -p "$STATE_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "⚠️ Config not found at $CONFIG_FILE. Generating initial config from Env Vars..."
     
-    # Generate default config (no secrets — token/model pushed via Bridge after start)
+    # Generate default config (env vars are PRIMARY injection path — Bridge is bonus)
+    # Determine telegram enabled state based on token presence
+    TELEGRAM_ENABLED="false"
+    if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then
+        TELEGRAM_ENABLED="true"
+    fi
+    
     cat > "$CONFIG_FILE" <<EOF
 {
   "meta": {
@@ -24,7 +30,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "agents": {
     "defaults": {
       "model": {
-        "primary": "google/gemini-3-flash-preview"
+        "primary": "${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
       },
       "workspace": "/app/workspace"
     }
@@ -38,11 +44,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
   },
   "channels": {
     "telegram": {
-      "enabled": false,
+      "enabled": $TELEGRAM_ENABLED,
       "accounts": {
         "default": {
-          "enabled": false,
-          "botToken": "",
+          "enabled": $TELEGRAM_ENABLED,
+          "botToken": "${OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN}",
           "groupPolicy": "allowlist",
           "allowFrom": ["*"]
         }
