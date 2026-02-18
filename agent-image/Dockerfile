@@ -1,6 +1,8 @@
 # Base on official OpenClaw starter
 FROM openclaw-starter:latest
 
+USER root
+
 # Install additional tools for Agents
 RUN apt-get update && apt-get install -y \
     curl \

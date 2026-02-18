@@ -730,7 +730,31 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		if output, readErr := s.container.ExecCommand(ctx, newContainerID, []string{"cat", "/home/node/.openclaw/openclaw.json"}); readErr == nil {
 			_ = json.Unmarshal([]byte(output), &currentConfig)
 		}
-		mergedConfig := deepMergeMap(currentConfig, bridgePayload)
+
+		// Clean profiles for openclaw.json (keep only metadata, remove keys)
+		cleanProfiles := make(map[string]interface{})
+		if profiles != nil {
+			for pk, pv := range profiles {
+				if prof, ok := pv.(map[string]interface{}); ok {
+					cleanProf := deepCopyMap(prof)
+					delete(cleanProf, "key")   // Remove API Key
+					delete(cleanProf, "token") // Remove other tokens if any
+					cleanProfiles[pk] = cleanProf
+				}
+			}
+		}
+
+		// Prepare config for openclaw.json
+		gatewayConfig := deepCopyMap(configCopy)
+		if len(cleanProfiles) > 0 {
+			if gatewayConfig["auth"] == nil {
+				gatewayConfig["auth"] = make(map[string]interface{})
+			}
+			auth := gatewayConfig["auth"].(map[string]interface{})
+			auth["profiles"] = cleanProfiles
+		}
+
+		mergedConfig := deepMergeMap(currentConfig, gatewayConfig)
 		fullConfigJSON, _ := json.MarshalIndent(mergedConfig, "", "  ")
 		if copyErr := s.container.CopyToContainer(ctx, newContainerID, "/home/node/.openclaw/openclaw.json", fullConfigJSON); copyErr != nil {
 			log.Printf("[WARN] CopyToContainer config also failed: %v", copyErr)

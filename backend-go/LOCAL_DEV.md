@@ -54,3 +54,25 @@ If you hit a 500 error locally:
    docker exec <container_name> env
    ```
    (We recently fixed a bug where `PATH` was missing!)
+
+## 🔍 Troubleshooting
+
+### Missing Base Image (`openclaw-starter`) - 4GB+ Transfer
+Jika image sangat besar (seperti `openclaw-starter` yang mencapai 4.25GB) dan pipe SSH sering gagal, gunakan metode `SCP` yang lebih stabil:
+
+1. **Di Server (simpan ke file):**
+   ```bash
+   docker save openclaw-starter:latest -o openclaw-starter.tar
+   ```
+
+2. **Di Laptop (copy file):**
+   ```bash
+   # Ganti mirza@103.246.107.79 sesuai server Anda
+   scp mirza@103.246.107.79:~/openclaw-starter.tar .
+   ```
+
+3. **Di Laptop (load image):**
+   ```bash
+   docker load -i openclaw-starter.tar
+   ```
+
