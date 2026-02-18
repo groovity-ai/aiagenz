@@ -565,12 +565,11 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		return nil
 	}
 
-	fmt.Printf("⚠️ Bridge update failed for %s, falling back to file copy: %v\n", id, err)
+	// 2. Fallback: Recreate Container (nuclear option when bridge is unreachable)
+	fmt.Printf("⚠️ Bridge update failed for %s, falling back to container recreate: %v\n", id, err)
 
-	// 2. Fallback: Recreate Container (Nuclear Option to satisfy Doctor)
-
-	// Extract configs for Env Vars
-	var telegramToken string
+	// Extract ALL config values for env vars (not just token)
+	var telegramToken, provider, apiKey, model string
 	if channels, ok := configCopy["channels"].(map[string]interface{}); ok {
 		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
 			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
@@ -582,46 +581,103 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 			}
 		}
 	}
+	if auth, ok := newConfig["auth"].(map[string]interface{}); ok {
+		if profs, ok := auth["profiles"].(map[string]interface{}); ok {
+			for _, v := range profs {
+				if prof, ok := v.(map[string]interface{}); ok {
+					if p, ok := prof["provider"].(string); ok && provider == "" {
+						provider = p
+					}
+					if k, ok := prof["key"].(string); ok && apiKey == "" {
+						apiKey = k
+					}
+				}
+			}
+		}
+	}
+	if agents, ok := configCopy["agents"].(map[string]interface{}); ok {
+		if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
+			if m, ok := defaults["model"].(map[string]interface{}); ok {
+				if primary, ok := m["primary"].(string); ok {
+					model = primary
+				}
+			}
+		}
+	}
 
-	// Prepare req for buildEnvVars
+	// Build complete env vars with all extracted config
 	createReq := &domain.CreateProjectRequest{
 		TelegramToken: telegramToken,
-		// We should also preserve other settings if possible, but Token is the main reset trigger
+		Provider:      provider,
+		APIKey:        apiKey,
+		Model:         model,
 	}
 	newEnv := s.buildEnvVars(project.ID, createReq)
 
-	// Destroy Old
+	// Derive image from project type (not fragile name matching)
+	image := "aiagenz-agent:latest"
+	if project.Type == "marketplace" {
+		image = "sahabatcuan:latest"
+	}
+
+	// Destroy old container
 	if err := s.container.Remove(ctx, *project.ContainerID); err != nil {
 		fmt.Printf("⚠️ Failed to remove old container: %v\n", err)
 	}
 
-	// Create New
+	// Create new container
 	containerName := fmt.Sprintf("aiagenz-%s", project.ID)
-	// Derive other params
-	// Simplified: assuming plan starter (or fetch from project). Assuming image default.
-	resources := ContainerResources{MemoryMB: 2048, CPU: 1.0} // Default resources
+	plan := domain.GetPlan(project.Plan)
+	resources := ContainerResources{MemoryMB: 2048, CPU: plan.CPU}
 	volumeName := fmt.Sprintf("aiagenz-data-%s", project.ID)
-	image := "aiagenz-agent:latest"
-	if strings.Contains(strings.ToLower(project.Name), "sahabatcuan") || project.Type == "marketplace" {
-		image = "sahabatcuan:latest"
-	}
 
 	newContainerID, err := s.container.Create(ctx, containerName, image, newEnv, resources, volumeName)
 	if err != nil {
 		return domain.ErrInternal("failed to recreate container", err)
 	}
 
-	// Start
+	// Start container
 	if err := s.container.Start(ctx, newContainerID); err != nil {
 		return domain.ErrInternal("failed to start new container", err)
 	}
 
-	// Update DB Status
+	// Wait for container to stabilize (same pattern as Create flow)
+	for i := 0; i < 10; i++ {
+		time.Sleep(2 * time.Second)
+		info, inspErr := s.container.Inspect(ctx, newContainerID)
+		if inspErr == nil && info.Status == "running" {
+			time.Sleep(1 * time.Second)
+			break
+		}
+	}
+
+	// Fix permissions
+	_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "-R", "node:node", "/home/node/.openclaw", "/tmp"})
+
+	// Inject auth-profiles.json (bridge plugin is baked into image)
+	if profiles != nil {
+		initialAuth := map[string]interface{}{
+			"version":  1,
+			"profiles": profiles,
+		}
+		authPath := "/home/node/.openclaw/agents/main/agent"
+		if err := s.container.ExecAsRoot(ctx, newContainerID, []string{"mkdir", "-p", authPath}); err == nil {
+			authStoreBytes, _ := json.MarshalIndent(initialAuth, "", "  ")
+			_ = s.container.CopyToContainer(ctx, newContainerID, authPath+"/auth-profiles.json", authStoreBytes)
+			_ = s.container.ExecAsRoot(ctx, newContainerID, []string{"chown", "-R", "node:node", authPath})
+		}
+	}
+
+	// Reload via Bridge SIGHUP (wait for bridge to be ready)
+	time.Sleep(3 * time.Second)
+	if _, bridgeErr := s.CallBridge(ctx, newContainerID, "POST", "/config/update", map[string]interface{}{}); bridgeErr != nil {
+		fmt.Printf("⚠️ Bridge reload failed on recreated container: %v\n", bridgeErr)
+	}
+
+	// Update DB
 	project.ContainerID = &newContainerID
 	project.Status = "running"
-	s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
-
-	// Sync token to DB (again, to be sure)
+	_ = s.repo.UpdateStatus(ctx, project.ID, "running", &newContainerID)
 	s.syncTokenToDB(ctx, project, newConfig)
 
 	return nil
