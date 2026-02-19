@@ -543,7 +543,15 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 bg-zinc-950 text-green-400 font-mono text-xs p-4 rounded-lg overflow-auto mx-4 mb-4">
-                    <pre className="whitespace-pre-wrap">{logs || "Waiting for logs..."}</pre>
+                    {['provisioning', 'creating', 'building'].includes(project.status) ? (
+                        <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-400">
+                            <div className="animate-spin h-6 w-6 border-2 border-yellow-500 border-t-transparent rounded-full" />
+                            <p className="text-sm">🚀 Agent is being provisioned...</p>
+                            <p className="text-xs text-zinc-500">Container is being set up. Logs will appear automatically once the agent is running.</p>
+                        </div>
+                    ) : (
+                        <pre className="whitespace-pre-wrap">{logs || "Waiting for logs..."}</pre>
+                    )}
                 </CardContent>
             </Card>
         </div>

@@ -24,6 +24,8 @@ interface Project {
     plan?: string
 }
 
+const PROVISIONING_STATUSES = ['provisioning', 'creating', 'building']
+
 const Console = dynamic(() => import("@/components/Console"), {
     ssr: false,
     loading: () => <div className="h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500">Loading Terminal...</div>
@@ -39,13 +41,21 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
     // Polling Status & Logs
     useEffect(() => {
         fetchProject()
-        fetchLogs()
         const interval = setInterval(() => {
             fetchProject()
-            fetchLogs()
         }, 5000)
         return () => clearInterval(interval)
     }, [id])
+
+    // Only poll logs when project is not provisioning
+    useEffect(() => {
+        if (!project || isProvisioning) return
+        fetchLogs()
+        const interval = setInterval(fetchLogs, 5000)
+        return () => clearInterval(interval)
+    }, [id, project?.status])
+
+    const isProvisioning = project ? PROVISIONING_STATUSES.includes(project.status) : false
 
     const fetchProject = async () => {
         try {
@@ -104,19 +114,19 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                     <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
                 </Link>
                 <h1 className="text-lg font-semibold">{project.name}</h1>
-                <Badge variant={project.status === "running" ? "default" : "destructive"} className="ml-2">
+                <Badge variant={project.status === "running" ? "default" : isProvisioning ? "secondary" : "destructive"} className={`ml-2 ${isProvisioning ? 'animate-pulse bg-yellow-500/20 text-yellow-600 border-yellow-300' : ''}`}>
                     {project.status?.toUpperCase()}
                 </Badge>
                 <div className="ml-auto flex items-center gap-2">
                     <Button
                         size="sm" variant="outline" className="gap-2 text-red-500 hover:text-red-600"
-                        onClick={() => handleControl('stop')} disabled={loading || project.status !== 'running'}
+                        onClick={() => handleControl('stop')} disabled={loading || project.status !== 'running' || isProvisioning}
                     >
                         <Square className="h-4 w-4" /> Stop
                     </Button>
                     <Button
                         size="sm" variant="outline" className="gap-2"
-                        onClick={() => handleControl(project.status === 'running' ? 'restart' : 'start')} disabled={loading}
+                        onClick={() => handleControl(project.status === 'running' ? 'restart' : 'start')} disabled={loading || isProvisioning}
                     >
                         {project.status === 'running' ? <RotateCw className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                         {project.status === 'running' ? "Restart" : "Start"}
