@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -468,6 +469,9 @@ func (h *ProjectHandler) AuthAdd(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrBadRequest("key is too short"))
 		return
 	}
+
+	fmt.Println("!!! [DEBUG] AuthAdd Handler Triggered !!!")
+	log.Printf("[DEBUG] AuthAdd: Provider=%s", req.Provider)
 
 	// APPROACH: Update DB + Runtime (Robust)
 	// We use the Update service which persists to DB and syncs to runtime/bridge.
