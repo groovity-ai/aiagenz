@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -457,12 +458,25 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 
 	// Prefer container IP (Direct Docker Network) because backend runs inside Docker.
 	// Host-mapped port (127.0.0.1) only works if backend runs on Host (local dev).
-	var url string
-	if info.IP != "" {
-		url = fmt.Sprintf("http://%s:4444%s", info.IP, endpoint)
-	} else if info.BridgePort != "" {
-		url = fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint)
+	var urls []string
+
+	// On macOS/Windows (Local Dev), Container IP is not reachable -> Prioritize Localhost
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.BridgePort != "" {
+		urls = append(urls, fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint))
+		if info.IP != "" {
+			urls = append(urls, fmt.Sprintf("http://%s:4444%s", info.IP, endpoint))
+		}
 	} else {
+		// On Linux (Production/Container), Prioritize Container IP
+		if info.IP != "" {
+			urls = append(urls, fmt.Sprintf("http://%s:4444%s", info.IP, endpoint))
+		}
+		if info.BridgePort != "" {
+			urls = append(urls, fmt.Sprintf("http://127.0.0.1:%s%s", info.BridgePort, endpoint))
+		}
+	}
+
+	if len(urls) == 0 {
 		return nil, fmt.Errorf("no bridge IP or port available")
 	}
 
@@ -485,45 +499,50 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 			time.Sleep(backoff)
 		}
 
-		// 1. Try Direct HTTP (Fast Path)
-		var bodyReader io.Reader
-		if body != nil {
-			jsonBytes, _ := json.Marshal(body)
-			bodyReader = bytes.NewBuffer(jsonBytes)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
-			if method == "POST" {
-				req.Header.Set("x-reload", "true")
+		// 1. Try Direct HTTP (Fast Path) - Iterate over candidate URLs
+		for _, targetURL := range urls {
+			var bodyReader io.Reader
+			if body != nil {
+				jsonBytes, _ := json.Marshal(body)
+				bodyReader = bytes.NewBuffer(jsonBytes)
 			}
 
-			// Set custom headers
-			if headers != nil {
-				for k, v := range headers {
-					req.Header.Set(k, v)
-				}
-			}
-
-			client := &http.Client{Timeout: timeout}
-			resp, err := client.Do(req)
+			req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
 			if err == nil {
-				respBody, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-
-				if resp.StatusCode < 500 {
-					if resp.StatusCode >= 400 {
-						return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
-					}
-					return respBody, nil
+				req.Header.Set("Content-Type", "application/json")
+				if method == "POST" {
+					req.Header.Set("x-reload", "true")
 				}
-				lastErr = fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+
+				// Set custom headers
+				if headers != nil {
+					for k, v := range headers {
+						req.Header.Set(k, v)
+					}
+				}
+
+				client := &http.Client{Timeout: timeout}
+				resp, err := client.Do(req)
+				if err == nil {
+					respBody, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+
+					if resp.StatusCode < 500 {
+						if resp.StatusCode >= 400 {
+							// Return error immediately for 4xx (client error)
+							return nil, fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+						}
+						// Success!
+						return respBody, nil
+					}
+					// 5xx error - treat as failure, try next URL or next attempt
+					lastErr = fmt.Errorf("bridge error %d: %s", resp.StatusCode, string(respBody))
+				} else {
+					lastErr = fmt.Errorf("bridge request failed: %w", err)
+				}
 			} else {
-				lastErr = fmt.Errorf("bridge request failed: %w", err)
+				lastErr = err
 			}
-		} else {
-			lastErr = err
 		}
 	}
 
