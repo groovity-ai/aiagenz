@@ -148,11 +148,22 @@ const handlers = {
         try {
             const { args } = JSON.parse(body);
             execFile('openclaw', args, { env: process.env, timeout: 30000 }, (error, stdout, stderr) => {
-                if (error) {
+                let data = stdout;
+                let isJson = false;
+                try {
+                    // Try to parse JSON output
+                    if (stdout && stdout.trim()) {
+                        data = JSON.parse(stdout);
+                        isJson = true;
+                    }
+                } catch (e) { }
+
+                // If error (exit code != 0) AND we didn't get valid JSON, then it's a real failure
+                if (error && !isJson) {
                     res.status(500).json({ ok: false, error: error.message, stdout, stderr });
                 } else {
-                    let data = stdout;
-                    try { data = JSON.parse(stdout); } catch (e) { }
+                    // If we got JSON, treat as success (ok: true) even if exit code was 1 (e.g. doctor found issues)
+                    // Or if no error, return text output
                     res.json({ ok: true, data, stderr });
                 }
             });
