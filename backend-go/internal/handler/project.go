@@ -430,17 +430,25 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 			accounts["default"] = defAccount
 		}
 
-		// Merge provided config into default account
+		// Merge provided config into default account (handle strings, booleans, numbers)
 		for k, v := range req.Config {
-			if strVal, ok := v.(string); ok && strVal != "" {
-				// Normalize key: if key is "token", change to "botToken" for OpenClaw v2+
-				if k == "token" && req.Type == "telegram" {
-					defAccount["botToken"] = strVal
-				} else {
-					defAccount[k] = strVal
+			switch val := v.(type) {
+			case string:
+				if val != "" {
+					// Normalize key: if key is "token", change to "botToken" for OpenClaw v2+
+					if k == "token" && req.Type == "telegram" {
+						defAccount["botToken"] = val
+					} else {
+						defAccount[k] = val
+					}
 				}
+			case bool:
+				defAccount[k] = val // e.g. enabled: true/false from toggle
+			case float64:
+				defAccount[k] = val // JSON numbers
 			}
 		}
+
 	}
 
 	// 5. Save Config
