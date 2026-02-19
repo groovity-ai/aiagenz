@@ -12,11 +12,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     unzip \
+    ttyd \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ttyd (pre-downloaded to avoid build network errors)
-COPY agent-image/ttyd /usr/bin/ttyd
-RUN chmod +x /usr/bin/ttyd
 
 # Copy AiAgenz Bridge Plugin (baked into image for fast startup)
 COPY agent-image/extensions/aiagenz-bridge /app/builtin-extensions/aiagenz-bridge
