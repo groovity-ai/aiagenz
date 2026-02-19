@@ -6,10 +6,11 @@ const { execFile } = require('child_process');
 // --- CONFIGURATION ---
 const PORT = 4444;
 
-// Default paths
-let CONFIG_PATH = '/home/node/.openclaw/openclaw.json';
-let AUTH_PROFILES_PATH = '/home/node/.openclaw/agents/main/agent/auth-profiles.json';
-let WORKSPACE_PATH = '/home/node/.openclaw';
+// Default paths — anchored to OpenClaw STATE_DIR (same as entrypoint.sh)
+const STATE_DIR = process.env.OPENCLAW_STATE_DIR || path.join(process.env.HOME || '/home/node', '.openclaw');
+let CONFIG_PATH = path.join(STATE_DIR, 'openclaw.json');
+let AUTH_PROFILES_PATH = path.join(STATE_DIR, 'agents/main/agent/auth-profiles.json');
+let WORKSPACE_PATH = STATE_DIR;
 
 // --- PLUGIN STATE ---
 const state = {
@@ -302,12 +303,19 @@ module.exports = {
     },
 
     async activate(context) {
+        // NOTE: We intentionally do NOT update AUTH_PROFILES_PATH from context.workspacePath.
+        // context.workspacePath is the AGENT workspace (e.g. /home/node/workspace),
+        // NOT the state dir where auth-profiles.json lives.
+        // Paths are already set correctly at module-load time from STATE_DIR env var.
         if (context?.workspacePath) {
             WORKSPACE_PATH = context.workspacePath;
-            CONFIG_PATH = path.join(WORKSPACE_PATH, 'openclaw.json');
-            AUTH_PROFILES_PATH = path.join(WORKSPACE_PATH, 'agents', 'main', 'agent', 'auth-profiles.json');
+            // Only update CONFIG_PATH if it's inside STATE_DIR (safeguard)
+            const stateBasedConfig = path.join(STATE_DIR, 'openclaw.json');
+            if (fs.existsSync(stateBasedConfig)) {
+                CONFIG_PATH = stateBasedConfig; // Re-affirm correct path
+            }
         }
-        console.log('[aiagenz-bridge] Activated (Context Loaded)');
+        console.log(`[aiagenz-bridge] Activated. STATE_DIR=${STATE_DIR} CONFIG_PATH=${CONFIG_PATH} AUTH_PROFILES_PATH=${AUTH_PROFILES_PATH}`);
         // Server already started in register()
     },
 
