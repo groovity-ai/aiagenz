@@ -780,21 +780,6 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 		}
 	}
 
-	// 4. ENSURE DEFAULTS (Inject Basic Agent Models Map - Global)
-	if config["agents"] == nil {
-		config["agents"] = map[string]interface{}{}
-	}
-	agents, _ := config["agents"].(map[string]interface{})
-	if agents["models"] == nil {
-		agents["models"] = map[string]interface{}{
-			"google/gemini-3-flash-preview": map[string]interface{}{"alias": "gemini-flash"},
-			"google/gemini-3-pro-preview":   map[string]interface{}{"alias": "gemini"},
-			"openai/gpt-4o":                 map[string]interface{}{"alias": "gpt4o"},
-			"openai/gpt-4o-mini":            map[string]interface{}{"alias": "gpt4o-mini"},
-			"anthropic/claude-3-5-sonnet":   map[string]interface{}{"alias": "claude"},
-		}
-	}
-
 	return config, nil
 }
 
