@@ -16,14 +16,24 @@ type Plan struct {
 func AvailablePlans() []Plan {
 	return []Plan{
 		{
+			ID:        "lite",
+			Name:      "Lite",
+			CPU:       0.5,
+			MemoryMB:  1024,
+			StorageGB: 2,
+			EgressGB:  10,
+			PriceUSD:  400, // $4/mo
+			Popular:   false,
+		},
+		{
 			ID:        "starter",
 			Name:      "Starter",
 			CPU:       1,
 			MemoryMB:  2048,
 			StorageGB: 10,
 			EgressGB:  100,
-			PriceUSD:  900, // $9/mo
-			Popular:   false,
+			PriceUSD:  900,  // $9/mo
+			Popular:   true, // Flag Starter as Popular/Default-ish
 		},
 		{
 			ID:        "pro",
@@ -33,7 +43,7 @@ func AvailablePlans() []Plan {
 			StorageGB: 50,
 			EgressGB:  500,
 			PriceUSD:  2900, // $29/mo
-			Popular:   true,
+			Popular:   false,
 		},
 		{
 			ID:        "business",

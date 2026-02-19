@@ -65,7 +65,7 @@ services:
       dockerfile: agent-image/Dockerfile
     image: aiagenz-agent:latest
     container_name: aiagenz-agent-builder
-    entrypoint: ["echo", "Agent Image Built successfully"]
+    entrypoint: [ "echo", "Agent Image Built successfully" ]
     networks:
       - aiagenz-network
 
