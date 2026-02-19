@@ -93,6 +93,21 @@ const handlers = {
             const current = readJson(CONFIG_PATH);
             const updates = JSON.parse(body);
 
+            // SPECIAL HANDLING: Auth Profiles should go to auth-profiles.json
+            if (updates.auth && updates.auth.profiles) {
+                const profiles = updates.auth.profiles;
+                const currentAuth = readJson(AUTH_PROFILES_PATH);
+                if (!currentAuth.profiles) currentAuth.profiles = {};
+
+                // Merge profiles
+                const mergedAuth = mergeDeep(currentAuth.profiles, profiles);
+                currentAuth.profiles = mergedAuth;
+                writeJson(AUTH_PROFILES_PATH, currentAuth);
+
+                // Remove profiles from main config update to avoid duplication/mismatch in openclaw.json
+                delete updates.auth.profiles;
+            }
+
             // Normalize token
             if (updates.channels?.telegram?.accounts?.default?.token) {
                 if (!updates.channels.telegram.accounts.default.botToken) {

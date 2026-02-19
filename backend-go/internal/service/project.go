@@ -303,6 +303,27 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					"mode":     "api_key",
 					"key":      currentConfig.APIKey,
 				}
+
+				// Update Auth Order
+				if runtimeConfig["auth"] == nil {
+					runtimeConfig["auth"] = make(map[string]interface{})
+				}
+				authMap, ok := runtimeConfig["auth"].(map[string]interface{})
+				if !ok {
+					authMap = make(map[string]interface{})
+					runtimeConfig["auth"] = authMap
+				}
+
+				if authMap["order"] == nil {
+					authMap["order"] = make(map[string]interface{})
+				}
+				order, ok := authMap["order"].(map[string]interface{})
+				if !ok {
+					order = make(map[string]interface{})
+					authMap["order"] = order
+				}
+				// Set this profile as primary for the provider
+				order[currentConfig.Provider] = []string{profileKey}
 			}
 
 			// Apply update to container
@@ -704,29 +725,31 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			profiles, _ := auth["profiles"].(map[string]interface{})
 
 			profileKey := dbConfig.Provider + ":default"
-			// Only inject if not exists (preserve user edits if any)
-			if profiles[profileKey] == nil {
-				profiles[profileKey] = map[string]interface{}{
-					"type":     "api_key",
-					"provider": dbConfig.Provider,
-					"key":      dbConfig.APIKey,
-				}
+			// Only inject if not exists (preserve user edits if any) - Force update to ensure Mode is correct
+			// if profiles[profileKey] == nil {
+			profiles[profileKey] = map[string]interface{}{
+				"mode":     "api_key",
+				"provider": dbConfig.Provider,
+				"key":      dbConfig.APIKey,
+			}
+			// }
+
+			// Ensure Auth Order exists and includes this profile
+			if config["auth"] == nil {
+				config["auth"] = map[string]interface{}{}
+			}
+			authObj := config["auth"].(map[string]interface{})
+			if authObj["order"] == nil {
+				authObj["order"] = map[string]interface{}{}
+			}
+			orderObj, _ := authObj["order"].(map[string]interface{})
+
+			// If no order for this provider, set it
+			if orderObj[dbConfig.Provider] == nil {
+				orderObj[dbConfig.Provider] = []string{profileKey}
 			}
 		}
 
-		// 5. Inject Basic Agent Models Map (Standard Aliases)
-		if config["agents"] != nil {
-			agents, _ := config["agents"].(map[string]interface{})
-			if agents["models"] == nil {
-				agents["models"] = map[string]interface{}{
-					"google/gemini-3-flash-preview": map[string]interface{}{"alias": "gemini-flash"},
-					"google/gemini-3-pro-preview":   map[string]interface{}{"alias": "gemini"},
-					"openai/gpt-4o":                 map[string]interface{}{"alias": "gpt4o"},
-					"openai/gpt-4o-mini":            map[string]interface{}{"alias": "gpt4o-mini"},
-					"anthropic/claude-3-5-sonnet":   map[string]interface{}{"alias": "claude"},
-				}
-			}
-		}
 	}
 
 	// 3. MERGE AUTH PROFILES & STATS FROM AGENT STORE (only if container exists)
@@ -754,6 +777,21 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 					}
 				}
 			}
+		}
+	}
+
+	// 4. ENSURE DEFAULTS (Inject Basic Agent Models Map - Global)
+	if config["agents"] == nil {
+		config["agents"] = map[string]interface{}{}
+	}
+	agents, _ := config["agents"].(map[string]interface{})
+	if agents["models"] == nil {
+		agents["models"] = map[string]interface{}{
+			"google/gemini-3-flash-preview": map[string]interface{}{"alias": "gemini-flash"},
+			"google/gemini-3-pro-preview":   map[string]interface{}{"alias": "gemini"},
+			"openai/gpt-4o":                 map[string]interface{}{"alias": "gpt4o"},
+			"openai/gpt-4o-mini":            map[string]interface{}{"alias": "gpt4o-mini"},
+			"anthropic/claude-3-5-sonnet":   map[string]interface{}{"alias": "claude"},
 		}
 	}
 
