@@ -32,11 +32,13 @@ type ContainerInfo struct {
 	Uptime     string `json:"uptime,omitempty"`
 	IP         string `json:"ip,omitempty"`
 	BridgePort string `json:"bridgePort,omitempty"` // Host-mapped port for Bridge plugin
+	TtydPort   string `json:"ttydPort,omitempty"`   // Host-mapped port for ttyd
 }
 
 const (
 	NetworkName    = "aiagenz-network"
 	BridgeContPort = "4444/tcp" // Bridge plugin port inside container
+	TtydContPort   = "7681/tcp" // ttyd web terminal port
 )
 
 // NewContainerService creates a new Docker client.
@@ -99,11 +101,20 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 		}
 	}
 
+	// Extract host-mapped Ttyd port
+	ttydPort := ""
+	if info.NetworkSettings != nil && info.NetworkSettings.Ports != nil {
+		if bindings, ok := info.NetworkSettings.Ports[nat.Port(TtydContPort)]; ok && len(bindings) > 0 {
+			ttydPort = bindings[0].HostPort
+		}
+	}
+
 	return &ContainerInfo{
 		Status:     info.State.Status,
 		Uptime:     info.State.StartedAt,
 		IP:         ip,
 		BridgePort: bridgePort,
+		TtydPort:   ttydPort,
 	}, nil
 }
 
@@ -129,12 +140,17 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 
 	// Bridge port mapping: container:4444 → host:auto (bound to 127.0.0.1)
 	bridgePort := nat.Port(BridgeContPort)
+	ttydPort := nat.Port(TtydContPort)
 	exposedPorts := nat.PortSet{
 		bridgePort: struct{}{},
+		ttydPort:   struct{}{},
 	}
 	portBindings := nat.PortMap{
 		bridgePort: []nat.PortBinding{
 			{HostIP: "127.0.0.1", HostPort: ""}, // empty = Docker auto-assigns
+		},
+		ttydPort: []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: ""}, // Publicly accessible for Web Terminal
 		},
 	}
 
@@ -249,7 +265,7 @@ func (s *ContainerService) ExecAttach(ctx context.Context, execID string) (*type
 // Uses a 30-second timeout to prevent hanging processes from blocking HTTP requests.
 func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, cmd []string) (string, error) {
 	// IMP-1: Add timeout to prevent indefinite hangs
-	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	execCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	execConfig := container.ExecOptions{

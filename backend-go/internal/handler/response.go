@@ -22,6 +22,10 @@ func JSON(w http.ResponseWriter, status int, data interface{}) {
 // Error writes an error JSON response, using AppError status codes when available.
 func Error(w http.ResponseWriter, err error) {
 	if appErr, ok := domain.AsAppError(err); ok {
+		// Log internal server errors to help debugging
+		if appErr.Code == http.StatusInternalServerError {
+			log.Printf("[ERROR] 500 Internal Server Error: %v (Cause: %v)", appErr.Message, appErr.Err)
+		}
 		JSON(w, appErr.Code, map[string]string{"error": appErr.Message})
 		return
 	}

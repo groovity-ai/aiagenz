@@ -106,11 +106,20 @@ const handlers = {
 
             res.json({ ok: true, message: "Config updated" });
 
-            // Graceful reload
-            if (req.headers['x-reload'] === 'true') {
-                setTimeout(() => {
-                    try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
-                }, 500);
+            // Reload Strategy
+            const strategy = req.headers['x-strategy'] || 'restart';
+
+            if (strategy === 'restart') {
+                if (req.headers['x-reload'] === 'true') {
+                    console.log('[bridge] Strategy: Restarting process...');
+                    setTimeout(() => {
+                        try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
+                    }, 500);
+                }
+            } else if (strategy === 'hot-reload') {
+                console.log('[bridge] Strategy: Hot Reload (File written, skipping restart)');
+                // Ideally, trigger OpenClaw internal reload here if API exists
+                // if (state.api?.config?.reload) state.api.config.reload();
             }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });

@@ -95,6 +95,9 @@ export OPENCLAW_STATE_DIR="$STATE_DIR"
 export CI=true
 
 # --- 4. Launch ---
+echo "🚀 Starting Web Terminal (ttyd)..."
+nohup su node -c "ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
+
 echo "🚀 Starting OpenClaw Gateway..."
 # Exec into node process (replace shell)
 exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind auto --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"

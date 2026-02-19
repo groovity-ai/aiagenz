@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     unzip \
+    && curl -L https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/bin/ttyd \
+    && chmod +x /usr/bin/ttyd \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy AiAgenz Bridge Plugin (baked into image for fast startup)

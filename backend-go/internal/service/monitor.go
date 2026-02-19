@@ -38,7 +38,8 @@ func NewMonitorService(db *pgxpool.Pool, container *ContainerService) *MonitorSe
 func (s *MonitorService) Start(ctx context.Context) {
 	// Start immediately, then ticker
 	go func() {
-		s.collectMetrics(context.Background())
+		// TEMPORARY DISABLE MONITORING TO REDUCE LOG SPAM & LOAD
+		// s.collectMetrics(context.Background())
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -46,7 +47,7 @@ func (s *MonitorService) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.collectMetrics(context.Background())
+				// s.collectMetrics(context.Background())
 			}
 		}
 	}()

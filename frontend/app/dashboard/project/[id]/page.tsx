@@ -127,6 +127,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                             <TabsTrigger value="automation" className="gap-2"><Clock className="h-4 w-4" /> Automation</TabsTrigger>
                             <TabsTrigger value="advanced" className="gap-2"><FileJson className="h-4 w-4" /> Advanced</TabsTrigger>
                             <TabsTrigger value="console" className="gap-2"><Terminal className="h-4 w-4" /> Console</TabsTrigger>
+                            <TabsTrigger value="webterm" className="gap-2"><Terminal className="h-4 w-4" /> WebTerm</TabsTrigger>
                         </TabsList>
                     </div>
 
@@ -152,6 +153,23 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
 
                     <TabsContent value="console" className="flex-1 h-[600px]">
                         <Console projectId={id} />
+                    </TabsContent>
+
+                    <TabsContent value="webterm" className="flex-1 h-[600px] border rounded-lg overflow-hidden bg-black">
+                        {project.ttydPort ? (
+                            <iframe
+                                src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${project.ttydPort}`}
+                                className="w-full h-full border-none"
+                                title="Web Terminal"
+                                allow="clipboard-read; clipboard-write"
+                            />
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                                <Terminal className="h-8 w-8 opacity-50" />
+                                <p>Web Terminal not available.</p>
+                                <p className="text-xs">Ensure project is running and port is exposed.</p>
+                            </div>
+                        )}
                     </TabsContent>
                 </Tabs>
             </main>

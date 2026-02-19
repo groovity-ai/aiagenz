@@ -46,7 +46,7 @@ const DEPLOY_STAGES = [
 ]
 
 const PROVIDERS = {
-    google: ["google/gemini-3-flash-preview", "google/gemini-3-pro-preview"],
+    google: ["google/google/gemini-3-flash-preview", "google/gemini-3-pro-preview"],
     openai: ["openai/gpt-4o", "openai/gpt-3.5-turbo"],
     anthropic: ["anthropic/claude-3-5-sonnet"],
     "google-antigravity": ["google-antigravity/gemini-3-pro-high", "google-antigravity/gemini-3-pro-low"]
@@ -64,7 +64,7 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
     const [telegramToken, setTelegramToken] = useState("")
     const [apiKey, setApiKey] = useState("")
     const [provider, setProvider] = useState("google")
-    const [model, setModel] = useState("google/gemini-3-flash-preview")
+    const [model, setModel] = useState("google/google/gemini-3-flash-preview")
     const [availableModels, setAvailableModels] = useState<string[]>(PROVIDERS.google)
 
     // Deploy state
@@ -98,7 +98,7 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
             setTelegramToken("")
             setApiKey("")
             setProvider("google")
-            setModel("gemini-3-flash-preview")
+            setModel("google/gemini-3-flash-preview")
             setDeploying(false)
             setDeployStage(0)
             setDeploySuccess(false)
