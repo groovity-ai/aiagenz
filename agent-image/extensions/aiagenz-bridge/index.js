@@ -108,20 +108,22 @@ const handlers = {
                 console.log('[bridge] Auth Profiles Update:', Object.keys(updates.auth.profiles));
             }
 
-            // SPECIAL HANDLING: Auth Profiles should go to auth-profiles.json
+            // SPECIAL HANDLING: Mirror Auth Profiles to auth-profiles.json too
             if (updates.auth && updates.auth.profiles) {
                 const profiles = updates.auth.profiles;
                 const currentAuth = readJson(AUTH_PROFILES_PATH);
                 if (!currentAuth.profiles) currentAuth.profiles = {};
 
-                // Merge profiles
+                // Merge profiles into auth-profiles.json (mirror for display)
                 const mergedAuth = mergeDeep(currentAuth.profiles, profiles);
                 currentAuth.profiles = mergedAuth;
                 writeJson(AUTH_PROFILES_PATH, currentAuth);
+                console.log('[bridge] Mirrored auth profiles to auth-profiles.json');
 
-                // Remove profiles from main config update to avoid duplication/mismatch in openclaw.json
-                delete updates.auth.profiles;
+                // NOTE: we do NOT delete updates.auth.profiles here anymore.
+                // Profiles (with keys) stay in openclaw.json so OpenClaw can read them.
             }
+
 
             // Normalize token
             if (updates.channels?.telegram?.accounts?.default?.token) {
