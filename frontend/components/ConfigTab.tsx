@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Plus, Trash2, Save, RefreshCw, Key, Bot, Eye, EyeOff, Pencil, X } from "lucide-react"
+import { Plus, Trash2, Save, RefreshCw, Key, Bot, Eye, EyeOff, Pencil, X, ArrowUp, ArrowDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
 // IMP-7: TypeScript interfaces for config types
@@ -47,10 +47,12 @@ interface OpenClawConfig {
     agents?: {
         list?: Agent[]
         defaults?: { model?: { primary?: string } }
+        models?: Record<string, { alias?: string }>
     }
     auth?: {
         profiles?: Record<string, AuthProfile>
         usageStats?: Record<string, UsageStats>
+        order?: Record<string, string[]>
     }
     channels?: Record<string, ChannelConfig>
 }
@@ -163,10 +165,11 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
     return (
         <div className="space-y-6">
             <Tabs defaultValue="general" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                     <TabsTrigger value="general">General</TabsTrigger>
                     <TabsTrigger value="channels">Channels</TabsTrigger>
                     <TabsTrigger value="llm">LLM Providers</TabsTrigger>
+                    <TabsTrigger value="aliases">Model Aliases</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="general" className="space-y-4">
@@ -179,6 +182,10 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
 
                 <TabsContent value="llm">
                     <LLMEditor config={config} projectId={projectId} availableModels={availableModels} onUpdate={refreshData} />
+                </TabsContent>
+
+                <TabsContent value="aliases">
+                    <AliasesEditor config={config} projectId={projectId} onUpdate={refreshData} />
                 </TabsContent>
             </Tabs>
         </div>

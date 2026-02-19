@@ -161,7 +161,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 				}
 			}
 			log.Printf("[INFO] Pushing initial config via Bridge for %s...", containerName)
-			if _, err := s.CallBridge(bgCtx, containerID, "POST", "/config/update", configPayload); err != nil {
+			if _, err := s.CallBridge(bgCtx, containerID, "POST", "/config/update", configPayload, nil); err != nil {
 				log.Printf("[WARN] Bridge config push failed for %s: %v — config already in env vars", containerName, err)
 			}
 		}
@@ -449,7 +449,7 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 // CallBridge executes an HTTP request to the container's internal bridge plugin.
 // Includes retry logic with backoff for non-command endpoints.
 // Uses host-mapped port (bypasses gVisor) when available, falls back to container IP.
-func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, endpoint string, body interface{}) ([]byte, error) {
+func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, endpoint string, body interface{}, headers map[string]string) ([]byte, error) {
 	info, err := s.container.Inspect(ctx, containerID)
 	if err != nil || info.Status != "running" {
 		return nil, fmt.Errorf("container not running")
@@ -497,6 +497,13 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 			req.Header.Set("Content-Type", "application/json")
 			if method == "POST" {
 				req.Header.Set("x-reload", "true")
+			}
+			
+			// Set custom headers
+			if headers != nil {
+				for k, v := range headers {
+					req.Header.Set(k, v)
+				}
 			}
 
 			client := &http.Client{Timeout: timeout}
@@ -547,7 +554,7 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 
 // GetBridgeStatus queries the bridge /status endpoint.
 func (s *ProjectService) GetBridgeStatus(ctx context.Context, containerID string) map[string]interface{} {
-	resp, err := s.CallBridge(ctx, containerID, "GET", "/status", nil)
+	resp, err := s.CallBridge(ctx, containerID, "GET", "/status", nil, nil)
 	if err != nil {
 		return nil
 	}
@@ -565,7 +572,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 	}
 
 	// 1. Try Bridge API (Fast Path)
-	resp, err := s.CallBridge(ctx, *project.ContainerID, "GET", "/config", nil)
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "GET", "/config", nil, nil)
 	if err == nil {
 		var config map[string]interface{}
 		if json.Unmarshal(resp, &config) == nil {
@@ -776,7 +783,8 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		auth["profiles"] = profiles
 	}
 
-	_, err = s.CallBridge(ctx, *project.ContainerID, "POST", "/config/update", bridgePayload)
+	headers := map[string]string{"x-strategy": "restart"} // Default strategy
+	_, err = s.CallBridge(ctx, *project.ContainerID, "POST", "/config/update", bridgePayload, headers)
 	if err == nil {
 		s.syncTokenToDB(ctx, project, newConfig)
 		return nil
@@ -874,7 +882,7 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 	bridgePayload := map[string]interface{}{
 		"args": args,
 	}
-	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/command", bridgePayload)
+	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/command", bridgePayload, nil)
 	if err == nil {
 		var bridgeResp struct {
 			Ok     bool        `json:"ok"`
@@ -932,7 +940,7 @@ func (s *ProjectService) OAuthGetURL(ctx context.Context, projectID, userID, pro
 	// Try Bridge first
 	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/login", map[string]interface{}{
 		"provider": provider,
-	})
+	}, nil)
 	if err == nil {
 		return string(resp), nil
 	}
@@ -963,7 +971,7 @@ func (s *ProjectService) OAuthSubmitCallback(ctx context.Context, projectID, use
 	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/callback", map[string]interface{}{
 		"provider":    provider,
 		"callbackUrl": callbackURL,
-	})
+	}, nil)
 	if err == nil {
 		return string(resp), nil
 	}
