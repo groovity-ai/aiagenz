@@ -2,10 +2,12 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aiagenz/backend/internal/repository"
 	"github.com/aiagenz/backend/internal/service"
@@ -39,7 +41,8 @@ func NewConsoleHandler(
 }
 
 // Handle upgrades HTTP to WebSocket and attaches to a container shell.
-// URL: /projects/{projectId}/console?token=JWT_TOKEN
+// Auth: first message must be {"type":"auth","token":"JWT"} (preferred),
+// or fallback to ?token= query param for backwards compatibility.
 func (h *ConsoleHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Extract project ID from URL path
 	parts := strings.Split(r.URL.Path, "/")
@@ -49,38 +52,58 @@ func (h *ConsoleHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	projectID := parts[2]
 
-	// Authenticate via query param token
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		http.Error(w, "token required", http.StatusUnauthorized)
-		return
-	}
+	// Check for token in query param (backwards compat / fallback)
+	tokenFromQuery := r.URL.Query().Get("token")
 
-	claims, err := h.auth.VerifyToken(token)
-	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Look up project and verify ownership
-	project, err := h.repo.FindByID(context.Background(), projectID, claims.Sub)
-	if err != nil || project == nil {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	if project.ContainerID == nil {
-		http.Error(w, "no container for this project", http.StatusNotFound)
-		return
-	}
-
-	// Upgrade to WebSocket
+	// Upgrade to WebSocket first (before auth, so token doesn't need to be in URL)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer conn.Close()
+
+	// Authenticate: prefer first-message auth, fall back to query param
+	var token string
+	if tokenFromQuery != "" {
+		token = tokenFromQuery
+	} else {
+		// Wait for auth message (with 10s deadline)
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_, msg, err := conn.ReadMessage()
+		conn.SetReadDeadline(time.Time{}) // clear deadline
+		if err != nil {
+			conn.WriteMessage(websocket.TextMessage, []byte("❌ Auth timeout — no token received\r\n"))
+			return
+		}
+		var authMsg struct {
+			Type  string `json:"type"`
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(msg, &authMsg); err != nil || authMsg.Type != "auth" || authMsg.Token == "" {
+			conn.WriteMessage(websocket.TextMessage, []byte("❌ Invalid auth message. Expected: {\"type\":\"auth\",\"token\":\"...\"}\r\n"))
+			return
+		}
+		token = authMsg.Token
+	}
+
+	claims, err := h.auth.VerifyToken(token)
+	if err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("❌ Invalid or expired token\r\n"))
+		return
+	}
+
+	// Look up project and verify ownership
+	project, err := h.repo.FindByID(context.Background(), projectID, claims.Sub)
+	if err != nil || project == nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("❌ Project not found\r\n"))
+		return
+	}
+
+	if project.ContainerID == nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("❌ No container for this project\r\n"))
+		return
+	}
 
 	log.Printf("🔌 Console connected to %s (user: %s)", *project.ContainerID, claims.Email)
 
