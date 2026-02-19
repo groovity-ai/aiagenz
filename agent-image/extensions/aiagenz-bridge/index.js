@@ -114,14 +114,27 @@ const handlers = {
                 const currentAuth = readJson(AUTH_PROFILES_PATH);
                 if (!currentAuth.profiles) currentAuth.profiles = {};
 
-                // Merge profiles into auth-profiles.json (mirror for display)
-                const mergedAuth = mergeDeep(currentAuth.profiles, profiles);
+                // Normalize: add `apiKey` field (OpenClaw reads this) alongside `key` (our display field)
+                const normalizedProfiles = {};
+                for (const [k, v] of Object.entries(profiles)) {
+                    if (v && typeof v === 'object') {
+                        normalizedProfiles[k] = {
+                            ...v,
+                            apiKey: v.apiKey || v.key || undefined  // ensure OpenClaw field present
+                        };
+                    } else {
+                        normalizedProfiles[k] = v;
+                    }
+                }
+
+                // Merge profiles into auth-profiles.json (mirror for display + OpenClaw reads)
+                const mergedAuth = mergeDeep(currentAuth.profiles, normalizedProfiles);
                 currentAuth.profiles = mergedAuth;
                 writeJson(AUTH_PROFILES_PATH, currentAuth);
                 console.log('[bridge] Mirrored auth profiles to auth-profiles.json');
 
-                // NOTE: we do NOT delete updates.auth.profiles here anymore.
-                // Profiles (with keys) stay in openclaw.json so OpenClaw can read them.
+                // Also normalize in the config update so openclaw.json gets apiKey too
+                updates.auth.profiles = normalizedProfiles;
             }
 
 
@@ -162,31 +175,34 @@ const handlers = {
         try {
             const { provider, key, mode } = JSON.parse(body);
             const profileKey = `${provider}:default`;
+            const profileEntry = { provider, mode: mode || 'api_key', key, apiKey: key };
+            // Note: both `key` (our display) and `apiKey` (OpenClaw's field name) are written
 
             // PRIMARY: Write into openclaw.json auth.profiles (this is what OpenClaw reads)
             const config = readJson(CONFIG_PATH);
             if (!config.auth) config.auth = {};
             if (!config.auth.profiles) config.auth.profiles = {};
-            config.auth.profiles[profileKey] = { provider, mode: mode || 'api_key', key };
+            config.auth.profiles[profileKey] = profileEntry;
             writeJson(CONFIG_PATH, config);
             console.log(`[bridge] POST /auth/add: wrote key for ${profileKey} to openclaw.json`);
 
-            // MIRROR: Also update auth-profiles.json for display consistency
+            // MIRROR: Also update auth-profiles.json for display + OpenClaw agent reads
             const currentAuth = readJson(AUTH_PROFILES_PATH);
             if (!currentAuth.profiles) currentAuth.profiles = {};
-            currentAuth.profiles[profileKey] = { provider, mode: mode || 'api_key', key };
+            currentAuth.profiles[profileKey] = profileEntry;
             writeJson(AUTH_PROFILES_PATH, currentAuth);
+            console.log(`[bridge] POST /auth/add: wrote key for ${profileKey} to auth-profiles.json`);
 
             res.json({ ok: true, message: "Auth added" });
 
-            setTimeout(() => {
-                try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
-            }, 500);
+            // NOTE: No SIGHUP here intentionally.
+            // Sending SIGHUP causes OpenClaw to reinitialize and overwrite auth-profiles.json
+            // with its native format (clearing our saved key). The key is now on disk;
+            // OpenClaw will pick it up on next message / natural reload.
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
     },
-
 
     'POST:/command': (req, res, body) => {
         try {
