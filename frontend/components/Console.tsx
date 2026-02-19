@@ -72,7 +72,7 @@ export default function Console({ projectId }: ConsoleProps) {
 
         // Build WebSocket URL — through Nginx /ws/ proxy (same host, same port)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const wsUrl = `${protocol}//${window.location.host}/ws/projects/${projectId}/console`
+        const wsUrl = `${protocol}//${window.location.host}/ws/projects/${projectId}/console?token=${encodeURIComponent(token)}`
 
         term.write(`\x1b[90mConnecting to ${window.location.host}...\x1b[0m\r\n`)
 
@@ -83,8 +83,6 @@ export default function Console({ projectId }: ConsoleProps) {
         let pingInterval: NodeJS.Timeout | null = null
 
         ws.onopen = () => {
-            // Send auth token as first message instead of in URL (security: avoid token in logs)
-            ws.send(JSON.stringify({ type: 'auth', token }))
             setConnected(true)
             setError(false)
             term.write('\r\n\x1b[32m🔌 Connected to Agent Container...\x1b[0m\r\n')
