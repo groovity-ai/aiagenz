@@ -35,7 +35,14 @@ func (h *StatsHandler) ContainerStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.container.Stats(r.Context(), containerID)
 	if err != nil {
-		Error(w, err)
+		// Graceful degradation: return empty stats with error info instead of 500
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"cpu_percent":     0,
+			"memory_percent":  0,
+			"memory_usage_mb": 0,
+			"status":          "Stats unavailable",
+			"error":           err.Error(),
+		})
 		return
 	}
 

@@ -309,7 +309,8 @@ func (s *ContainerService) ExecCommand(ctx context.Context, containerID string, 
 		if errMsg == "" {
 			errMsg = stdout.String()
 		}
-		return "", fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, errMsg)
+		// Return stdout even on error, so callers can parse JSON error responses.
+		return stdout.String(), fmt.Errorf("command exited with code %d: %s", inspectResp.ExitCode, errMsg)
 	}
 
 	return stdout.String(), nil

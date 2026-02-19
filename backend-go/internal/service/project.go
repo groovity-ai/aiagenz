@@ -896,7 +896,8 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 	// 2. Fallback: Docker Exec
 	fullCmd := append([]string{"openclaw"}, args...)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, fullCmd)
-	if err != nil {
+	// If error occurred but we have output, try to parse it (some CLI commands return exit 1 but print JSON report)
+	if err != nil && output == "" {
 		return nil, domain.ErrInternal("command failed", fmt.Errorf("%s", sanitizeError(err.Error())))
 	}
 
