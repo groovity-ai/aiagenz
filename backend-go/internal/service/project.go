@@ -1063,6 +1063,8 @@ func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjec
 		"OPENCLAW_GATEWAY_AUTH_MODE=token",
 		"OPENCLAW_GATEWAY_TOKEN=" + projectID,
 		"OPENCLAW_GATEWAY_BIND=auto",
+		// Give each agent a unique name for Bonjour/mDNS discovery (prevents hostname conflicts)
+		"OPENCLAW_GATEWAY_NAME=aiagenz-" + projectID[:8],
 		"OPENCLAW_DOCTOR=false",
 		"OPENCLAW_SKIP_DOCTOR=true",
 	}

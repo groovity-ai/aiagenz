@@ -98,6 +98,9 @@ export CI=true
 echo "🚀 Starting Web Terminal (ttyd)..."
 nohup su node -c "ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
 
+# Use project-specific name for Bonjour/mDNS discovery (prevents hostname conflicts)
+AGENT_NAME="${OPENCLAW_GATEWAY_NAME:-openclaw}"
+
 echo "🚀 Starting OpenClaw Gateway..."
 # Exec into node process (replace shell)
-exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind auto --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"
+exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind auto --name \"$AGENT_NAME\" --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"
