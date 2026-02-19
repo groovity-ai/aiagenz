@@ -104,8 +104,16 @@ const handlers = {
                 currentAuth.profiles = mergedAuth;
                 writeJson(AUTH_PROFILES_PATH, currentAuth);
 
-                // Remove profiles from main config update to avoid duplication/mismatch in openclaw.json
-                delete updates.auth.profiles;
+                // Create SANITIZED version for openclaw.json (metadata only, no secrets)
+                const sanitizedProfiles = {};
+                for (const [key, profile] of Object.entries(profiles)) {
+                    sanitizedProfiles[key] = { ...profile };
+                    delete sanitizedProfiles[key].key;
+                    delete sanitizedProfiles[key].token;
+                    delete sanitizedProfiles[key].password;
+                    delete sanitizedProfiles[key].secret;
+                }
+                updates.auth.profiles = sanitizedProfiles;
             }
 
             // Normalize token
