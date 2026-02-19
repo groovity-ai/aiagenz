@@ -277,7 +277,6 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
-			log.Printf("[DEBUG] Update: Provider=%s, APIKeyLen=%d", currentConfig.Provider, len(currentConfig.APIKey))
 			if currentConfig.APIKey != "" && currentConfig.Provider != "" {
 				if runtimeConfig["auth"] == nil {
 					runtimeConfig["auth"] = make(map[string]interface{})
@@ -287,7 +286,6 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					auth = make(map[string]interface{})
 					runtimeConfig["auth"] = auth
 				}
-				log.Printf("[DEBUG] Update: Auth map initialized")
 
 				if auth["profiles"] == nil {
 					auth["profiles"] = make(map[string]interface{})
@@ -810,14 +808,11 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 1. Try Bridge API (Fast Path)
 	bridgePayload := deepCopyMap(configCopy)
 	if profiles != nil {
-		log.Printf("[DEBUG] UpdateRuntimeConfig: Profiles found (count=%d)", len(profiles))
 		if bridgePayload["auth"] == nil {
 			bridgePayload["auth"] = map[string]interface{}{}
 		}
 		auth := bridgePayload["auth"].(map[string]interface{})
 		auth["profiles"] = profiles
-	} else {
-		log.Printf("[DEBUG] UpdateRuntimeConfig: No profiles extracted from config")
 	}
 
 	headers := map[string]string{"x-strategy": "restart"} // Default strategy
