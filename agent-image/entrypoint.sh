@@ -35,6 +35,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "workspace": "/home/node/workspace"
     }
   },
+  "auth": {
+    "profiles": {
+      "google:default": { "provider": "google", "mode": "api_key" },
+      "openai:default": { "provider": "openai", "mode": "api_key" },
+      "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
+    }
+  },
   "channels": {
     "telegram": {
       "enabled": $TELEGRAM_ENABLED,

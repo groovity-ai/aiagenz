@@ -82,12 +82,22 @@ const handlers = {
     'GET:/config': (req, res) => {
         const config = readJson(CONFIG_PATH);
         const auth = readJson(AUTH_PROFILES_PATH);
+
+        // Merge auth profiles: use openclaw.json as PRIMARY (it has the actual keys),
+        // fill in any profiles from auth-profiles.json that are missing in openclaw.json
         if (auth.profiles) {
             if (!config.auth) config.auth = {};
-            config.auth.profiles = auth.profiles;
+            if (!config.auth.profiles) config.auth.profiles = {};
+            // merge: auth-profiles.json entries fill gaps, but don't overwrite existing (which have keys)
+            for (const [k, v] of Object.entries(auth.profiles)) {
+                if (!config.auth.profiles[k]) {
+                    config.auth.profiles[k] = v;
+                }
+            }
         }
         res.json(config);
     },
+
 
     'POST:/config/update': (req, res, body) => {
         try {
@@ -149,10 +159,21 @@ const handlers = {
     'POST:/auth/add': (req, res, body) => {
         try {
             const { provider, key, mode } = JSON.parse(body);
-            const current = readJson(AUTH_PROFILES_PATH);
-            if (!current.profiles) current.profiles = {};
-            current.profiles[`${provider}:default`] = { provider, mode: mode || 'api_key', key };
-            writeJson(AUTH_PROFILES_PATH, current);
+            const profileKey = `${provider}:default`;
+
+            // PRIMARY: Write into openclaw.json auth.profiles (this is what OpenClaw reads)
+            const config = readJson(CONFIG_PATH);
+            if (!config.auth) config.auth = {};
+            if (!config.auth.profiles) config.auth.profiles = {};
+            config.auth.profiles[profileKey] = { provider, mode: mode || 'api_key', key };
+            writeJson(CONFIG_PATH, config);
+            console.log(`[bridge] POST /auth/add: wrote key for ${profileKey} to openclaw.json`);
+
+            // MIRROR: Also update auth-profiles.json for display consistency
+            const currentAuth = readJson(AUTH_PROFILES_PATH);
+            if (!currentAuth.profiles) currentAuth.profiles = {};
+            currentAuth.profiles[profileKey] = { provider, mode: mode || 'api_key', key };
+            writeJson(AUTH_PROFILES_PATH, currentAuth);
 
             res.json({ ok: true, message: "Auth added" });
 
@@ -163,6 +184,7 @@ const handlers = {
             res.status(500).json({ ok: false, error: e.message });
         }
     },
+
 
     'POST:/command': (req, res, body) => {
         try {
