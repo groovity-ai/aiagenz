@@ -32,19 +32,8 @@ Defines the priority/order of auth profiles for each provider.
 }
 ```
 
-#### `auth.profiles` (Sanitized Metadata)
-Stores the *structure* of profiles. Crucially, **keys/tokens are stripped** before writing here.
-```json
-"auth": {
-  "profiles": {
-    "google:default": {
-      "provider": "google",
-      "mode": "api_key"
-      // NO KEY HERE!
-    }
-  }
-}
-```
+#### `auth.profiles`
+**NOT PRESENT in `openclaw.json`**. Profiles are managed exclusively in `auth-profiles.json`.
 
 #### `agents.models` (Aliases)
 Maps friendly names to specific model IDs.
@@ -95,10 +84,10 @@ Responsible for **Split & Sanitize** persistence logic during `POST:/config/upda
 1.  Receives Full Config Payload (including `auth.profiles` with keys).
 2.  **Intercepts `auth.profiles`**:
     *   Writes **FULL** profiles to `auth-profiles.json`.
-    *   Creates **SANITIZED** copy (removes `key`, `token`, `secret`, `password`).
-    *   Updates `openclaw.json` update payload with Sanitized copy.
+    *   Writes **FULL** profiles to `auth-profiles.json`.
+    *   **Removes** `auth.profiles` from `openclaw.json` update payload entirely to prevent conflicts.
 3.  **Writes `openclaw.json`**:
-    *   Persists `auth.order`, Sanitized `profiles`, and other config.
+    *   Persists `auth.order` and other config, but NOT profiles.
 
 ---
 
