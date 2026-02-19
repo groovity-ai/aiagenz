@@ -19,17 +19,26 @@ type modelsCache struct {
 }
 
 const modelsCacheTTL = 5 * time.Minute
+const skillsCacheTTL = 1 * time.Minute
+const cronCacheTTL = 1 * time.Minute
 
 // ProjectHandler handles project HTTP endpoints.
 type ProjectHandler struct {
 	svc    *service.ProjectService
 	mu     sync.Mutex
 	models map[string]*modelsCache // key: projectID
+	skills map[string]*modelsCache // key: projectID
+	cron   map[string]*modelsCache // key: projectID
 }
 
 // NewProjectHandler creates a new ProjectHandler.
 func NewProjectHandler(svc *service.ProjectService) *ProjectHandler {
-	return &ProjectHandler{svc: svc, models: make(map[string]*modelsCache)}
+	return &ProjectHandler{
+		svc:    svc,
+		models: make(map[string]*modelsCache),
+		skills: make(map[string]*modelsCache),
+		cron:   make(map[string]*modelsCache),
+	}
 }
 
 // Create handles POST /api/projects.
@@ -564,11 +573,25 @@ func (h *ProjectHandler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) GetSkills(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
+
+	// Check cache
+	h.mu.Lock()
+	cached, ok := h.skills[id]
+	h.mu.Unlock()
+	if ok && time.Since(cached.cachedAt) < skillsCacheTTL {
+		JSON(w, http.StatusOK, cached.result)
+		return
+	}
+
 	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"skills", "list", "--json"})
 	if err != nil {
 		Error(w, err)
 		return
 	}
+
+	h.mu.Lock()
+	h.skills[id] = &modelsCache{result: result, cachedAt: time.Now()}
+	h.mu.Unlock()
 	JSON(w, http.StatusOK, result)
 }
 
@@ -588,6 +611,10 @@ func (h *ProjectHandler) InstallSkill(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
+	// Invalidate skills cache
+	h.mu.Lock()
+	delete(h.skills, id)
+	h.mu.Unlock()
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -601,6 +628,10 @@ func (h *ProjectHandler) UninstallSkill(w http.ResponseWriter, r *http.Request) 
 		Error(w, err)
 		return
 	}
+	// Invalidate skills cache
+	h.mu.Lock()
+	delete(h.skills, id)
+	h.mu.Unlock()
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -610,11 +641,25 @@ func (h *ProjectHandler) UninstallSkill(w http.ResponseWriter, r *http.Request) 
 func (h *ProjectHandler) GetCron(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
+
+	// Check cache
+	h.mu.Lock()
+	cached, ok := h.cron[id]
+	h.mu.Unlock()
+	if ok && time.Since(cached.cachedAt) < cronCacheTTL {
+		JSON(w, http.StatusOK, cached.result)
+		return
+	}
+
 	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"cron", "list", "--json"})
 	if err != nil {
 		Error(w, err)
 		return
 	}
+
+	h.mu.Lock()
+	h.cron[id] = &modelsCache{result: result, cachedAt: time.Now()}
+	h.mu.Unlock()
 	JSON(w, http.StatusOK, result)
 }
 
@@ -646,6 +691,10 @@ func (h *ProjectHandler) AddCron(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
+	// Invalidate cron cache
+	h.mu.Lock()
+	delete(h.cron, id)
+	h.mu.Unlock()
 	JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
