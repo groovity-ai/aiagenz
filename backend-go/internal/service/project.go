@@ -669,13 +669,44 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 		// 4. Inject API Key (Auth Profile)
 		if dbConfig.Provider != "" && dbConfig.APIKey != "" {
+			auth, _ := config["auth"].(map[string]interface{})
+			if auth["profiles"] == nil {
+				auth["profiles"] = map[string]interface{}{}
+			}
+			if auth["order"] == nil {
+				auth["order"] = map[string]interface{}{}
+			}
+			
+			profiles, _ := auth["profiles"].(map[string]interface{})
+			order, _ := auth["order"].(map[string]interface{})
+			
 			profileKey := dbConfig.Provider + ":default"
-			auth := config["auth"].(map[string]interface{})
-			profiles := auth["profiles"].(map[string]interface{})
-			profiles[profileKey] = map[string]interface{}{
-				"provider": dbConfig.Provider,
-				"mode":     "api_key",
-				"key":      dbConfig.APIKey,
+			// Only inject if not exists (preserve user edits if any)
+			if profiles[profileKey] == nil {
+				profiles[profileKey] = map[string]interface{}{
+					"provider": dbConfig.Provider,
+					"mode":     "api_key",
+					"key":      dbConfig.APIKey,
+				}
+			}
+			
+			// Set order for this provider if missing
+			if order[dbConfig.Provider] == nil {
+				order[dbConfig.Provider] = []string{profileKey}
+			}
+		}
+		
+		// 5. Inject Basic Agent Models Map (Standard Aliases)
+		if config["agents"] != nil {
+			agents, _ := config["agents"].(map[string]interface{})
+			if agents["models"] == nil {
+				agents["models"] = map[string]interface{}{
+					"google/gemini-3-flash-preview": map[string]interface{}{"alias": "gemini-flash"},
+					"google/gemini-3-pro-preview":   map[string]interface{}{"alias": "gemini"},
+					"openai/gpt-4o":                 map[string]interface{}{"alias": "gpt4o"},
+					"openai/gpt-4o-mini":            map[string]interface{}{"alias": "gpt4o-mini"},
+					"anthropic/claude-3-5-sonnet":   map[string]interface{}{"alias": "claude"},
+				}
 			}
 		}
 	}
@@ -1144,10 +1175,30 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 			}
 		}
 	}
-	if telegramToken == "" {
-		return
+
+	var provider, apiKey string
+	if auth, ok := runtimeConfig["auth"].(map[string]interface{}); ok {
+		if profiles, ok := auth["profiles"].(map[string]interface{}); ok {
+			// Find first available profile (Simple sync for now)
+			// TODO: Support multiple profiles in DB structure
+			for _, v := range profiles {
+				if prof, ok := v.(map[string]interface{}); ok {
+					if p, ok := prof["provider"].(string); ok {
+						provider = p
+					}
+					if k, ok := prof["key"].(string); ok {
+						apiKey = k
+					}
+					// Break after finding one (Primary)
+					if provider != "" && apiKey != "" {
+						break
+					}
+				}
+			}
+		}
 	}
 
+	// Update DB if any value found
 	var dbConfig domain.ProjectConfig
 	if project.Config != nil {
 		decrypted, err := s.enc.Decrypt(string(project.Config))
@@ -1155,12 +1206,28 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 			_ = json.Unmarshal(decrypted, &dbConfig)
 		}
 	}
-	dbConfig.TelegramToken = telegramToken
-	configJSON, _ := json.Marshal(dbConfig)
-	encryptedConfig, err := s.enc.Encrypt(configJSON)
-	if err == nil {
-		project.Config = []byte(encryptedConfig)
-		_ = s.repo.Update(ctx, project)
+	
+	changed := false
+	if telegramToken != "" {
+		dbConfig.TelegramToken = telegramToken
+		changed = true
+	}
+	if provider != "" {
+		dbConfig.Provider = provider
+		changed = true
+	}
+	if apiKey != "" {
+		dbConfig.APIKey = apiKey
+		changed = true
+	}
+
+	if changed {
+		configJSON, _ := json.Marshal(dbConfig)
+		encryptedConfig, err := s.enc.Encrypt(configJSON)
+		if err == nil {
+			project.Config = []byte(encryptedConfig)
+			_ = s.repo.Update(ctx, project)
+		}
 	}
 }
 
