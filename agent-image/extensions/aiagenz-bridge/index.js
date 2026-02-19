@@ -92,6 +92,10 @@ const handlers = {
         try {
             const current = readJson(CONFIG_PATH);
             const updates = JSON.parse(body);
+            console.log('[bridge] Config Update Received. Keys:', Object.keys(updates));
+            if (updates.auth?.profiles) {
+                console.log('[bridge] Auth Profiles Update:', Object.keys(updates.auth.profiles));
+            }
 
             // SPECIAL HANDLING: Auth Profiles should go to auth-profiles.json
             if (updates.auth && updates.auth.profiles) {

@@ -469,44 +469,13 @@ func (h *ProjectHandler) AuthAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// APPROACH: Direct Config Modification (More Reliable than CLI)
-	// 1. Get current config
-	config, err := h.svc.GetRuntimeConfig(r.Context(), id, userID)
+	// APPROACH: Update DB + Runtime (Robust)
+	// We use the Update service which persists to DB and syncs to runtime/bridge.
+	_, err := h.svc.Update(r.Context(), id, userID, &domain.UpdateProjectRequest{
+		Provider: req.Provider,
+		APIKey:   req.Key,
+	})
 	if err != nil {
-		Error(w, err)
-		return
-	}
-
-	// 2. Initialize map structure if missing
-	if config["auth"] == nil {
-		config["auth"] = make(map[string]interface{})
-	}
-	authObj, ok := config["auth"].(map[string]interface{})
-	if !ok {
-		authObj = make(map[string]interface{})
-		config["auth"] = authObj
-	}
-
-	if authObj["profiles"] == nil {
-		authObj["profiles"] = make(map[string]interface{})
-	}
-	profiles, ok := authObj["profiles"].(map[string]interface{})
-	if !ok {
-		profiles = make(map[string]interface{})
-		authObj["profiles"] = profiles
-	}
-
-	// 3. Set Profile Key
-	// Convention: provider:default
-	profileKey := req.Provider + ":default"
-	profiles[profileKey] = map[string]interface{}{
-		"provider": req.Provider,
-		"mode":     "api_key", // Assume API Key mode for direct add
-		"key":      req.Key,
-	}
-
-	// 4. Save Config (this handles restarting container too)
-	if err := h.svc.UpdateRuntimeConfig(r.Context(), id, userID, config); err != nil {
 		Error(w, err)
 		return
 	}
