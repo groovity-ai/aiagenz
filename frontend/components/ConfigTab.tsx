@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Plus, Trash2, Save, RefreshCw, Key, Bot, Eye, EyeOff, Pencil, X, ArrowUp, ArrowDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 
 // IMP-7: TypeScript interfaces for config types
@@ -346,6 +347,40 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
         }
     }
 
+    const handleToggleChannel = async (channelId: string, enabled: boolean) => {
+        setSavingChannel(channelId)
+        try {
+            // We use the AddChannel endpoint which merges into default account
+            // This ensures both account.enabled is updated AND implicitly channel.enabled is true
+            const res = await apiFetch(`/api/projects/${projectId}/channels`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: channelId,
+                    config: { enabled }  // This explicitly sets accounts.default.enabled
+                })
+            })
+            // If disabling, also try to set top-level disabled via command for completeness
+            if (!enabled) {
+                await apiFetch(`/api/projects/${projectId}/command`, {
+                    method: 'POST',
+                    body: JSON.stringify({ args: ['config', 'set', `channels.${channelId}.enabled`, 'false'] })
+                }).catch(() => { })
+            }
+
+            const data = await res.json().catch(() => ({ success: true }))
+            if (data.success === false) {
+                showToast(`${channelId}: ${data.message}`, 'error')
+            } else {
+                showToast(`${channelId} ${enabled ? 'enabled' : 'disabled'}!`)
+            }
+            onUpdate()
+        } catch (e) {
+            showToast(`Failed to toggle ${channelId}`, 'error')
+        } finally {
+            setSavingChannel(null)
+        }
+    }
+
     const updateField = (channelId: string, fieldKey: string, value: string) => {
         setChannelFields(prev => ({
             ...prev,
@@ -382,7 +417,15 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
                                                 {status === 'active' ? 'Active' : 'Disabled'}
                                             </Badge>
                                         </CardTitle>
-                                        <div className="flex gap-1">
+                                        <div className="flex gap-2 items-center">
+                                            <div className="flex items-center space-x-2">
+                                                <Switch
+                                                    id={`switch-${ch.id}`}
+                                                    checked={status === 'active'}
+                                                    onCheckedChange={(c) => handleToggleChannel(ch.id, c)}
+                                                    disabled={isSaving}
+                                                />
+                                            </div>
                                             <Button
                                                 variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600"
                                                 onClick={() => handleDisableChannel(ch.id)} disabled={isSaving}
@@ -415,7 +458,8 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
                         )
                     })}
                 </div>
-            )}
+            )
+            }
 
             {/* Add channel */}
             <Card>
@@ -494,12 +538,14 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
                 </CardContent>
             </Card>
 
-            {configuredChannels.length === 0 && !addingChannel && (
-                <div className="text-center p-8 border border-dashed rounded text-muted-foreground">
-                    No channels configured. Add one above to connect your agent.
-                </div>
-            )}
-        </div>
+            {
+                configuredChannels.length === 0 && !addingChannel && (
+                    <div className="text-center p-8 border border-dashed rounded text-muted-foreground">
+                        No channels configured. Add one above to connect your agent.
+                    </div>
+                )
+            }
+        </div >
     )
 }
 
