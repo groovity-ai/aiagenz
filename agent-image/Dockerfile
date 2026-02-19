@@ -12,8 +12,17 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     unzip \
-    ttyd \
     && rm -rf /var/lib/apt/lists/*
+
+# Install ttyd manually (apt package missing in some base images)
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then TTYD_ARCH="x86_64"; \
+    elif [ "$ARCH" = "aarch64" ]; then TTYD_ARCH="aarch64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    echo "Downloading ttyd for $ARCH..." && \
+    curl -L "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /usr/bin/ttyd && \
+    chmod +x /usr/bin/ttyd
 
 
 # Copy AiAgenz Bridge Plugin (baked into image for fast startup)
