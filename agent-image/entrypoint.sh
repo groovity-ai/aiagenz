@@ -32,15 +32,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "model": {
         "primary": "${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
       },
-      "workspace": "/app/workspace"
+      "workspace": "/home/node/workspace"
     }
   },
-  "auth": {
-    "profiles": {
-      "google:default": { "provider": "google", "mode": "api_key" },
-      "openai:default": { "provider": "openai", "mode": "api_key" },
-      "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
-    }
   },
   "channels": {
     "telegram": {
@@ -76,6 +70,24 @@ else
     echo "✅ Config found at $CONFIG_FILE. Skipping generation to preserve user changes."
 fi
 
+# --- 1.5. Auth Profiles Generation (Separate File) ---
+AUTH_PROFILES_DIR="$STATE_DIR/agents/main/agent"
+AUTH_PROFILES_FILE="$AUTH_PROFILES_DIR/auth-profiles.json"
+
+if [ ! -f "$AUTH_PROFILES_FILE" ]; then
+    echo "🔑 Generating initial auth-profiles.json at $AUTH_PROFILES_FILE..."
+    mkdir -p "$AUTH_PROFILES_DIR"
+    cat > "$AUTH_PROFILES_FILE" <<EOF
+{
+  "profiles": {
+    "google:default": { "provider": "google", "mode": "api_key" },
+    "openai:default": { "provider": "openai", "mode": "api_key" },
+    "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
+  }
+}
+EOF
+fi
+
 # --- 2. Plugin Installation (Always update to ensure latest version) ---
 mkdir -p "$STATE_DIR/extensions"
 if [ -d "/app/builtin-extensions/aiagenz-bridge" ]; then
@@ -88,6 +100,10 @@ fi
 # --- 3. Permissions ---
 # Fix permissions so 'node' user can read/write everything in state dir
 chown -R node:node "$STATE_DIR"
+
+# Ensure workspace exists and is writable
+mkdir -p /home/node/workspace
+chown -R node:node /home/node/workspace
 
 # Export env vars expected by OpenClaw
 export HOME="/home/node"
