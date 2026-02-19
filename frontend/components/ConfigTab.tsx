@@ -530,7 +530,9 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
     const [callbackUrl, setCallbackUrl] = useState("")
     const [callbackSubmitting, setCallbackSubmitting] = useState(false)
 
-    const derivedProviders = availableModels.map((m) => {
+    const safeModels = Array.isArray(availableModels) ? availableModels : []
+
+    const derivedProviders = safeModels.map((m) => {
         if (m.provider) return m.provider
         if (m.key) return m.key.split('/')[0]
         return null
@@ -540,7 +542,7 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
     const knownProviders: string[] = Array.from(new Set([...commonProviders, ...derivedProviders])).sort()
 
     // Available models for dropdown (sort by provider then name)
-    const modelOptions = [...availableModels].sort((a, b) => {
+    const modelOptions = [...safeModels].sort((a, b) => {
         const pA = a.provider || "", pB = b.provider || ""
         if (pA !== pB) return pA.localeCompare(pB)
         return (a.id || "").localeCompare(b.id || "")
