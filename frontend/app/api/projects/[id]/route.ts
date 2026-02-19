@@ -1,12 +1,8 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getToken } from '@/lib/auth';
+import { BACKEND_API } from '@/lib/api';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
-
-async function getToken() {
-    const cookieStore = await cookies();
-    return cookieStore.get('token')?.value;
-}
+const BACKEND_BASE = `${BACKEND_API}/projects`;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
@@ -47,6 +43,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         const data = await res.json();
         return NextResponse.json(data, { status: res.status });
     } catch (e) {
+        console.error('PUT /api/projects/[id] failed:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }
@@ -64,6 +61,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
         const data = await res.json();
         return NextResponse.json(data, { status: res.status });
     } catch (e) {
+        console.error('DELETE /api/projects/[id] failed:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }

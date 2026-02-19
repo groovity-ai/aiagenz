@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server"
+import { BACKEND_API } from '@/lib/api';
 
 export async function GET() {
     try {
-        const backendUrl = process.env.BACKEND_URL || "http://localhost:4001"
-        const res = await fetch(`${backendUrl}/api/plans`)
+        const res = await fetch(`${BACKEND_API}/plans`)
         const data = await res.json()
         return NextResponse.json(data)
-    } catch {
+    } catch (e) {
+        console.error('GET /api/plans failed:', e);
         return NextResponse.json([], { status: 500 })
     }
 }

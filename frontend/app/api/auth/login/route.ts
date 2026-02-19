@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { BACKEND_API } from '@/lib/api';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/auth/login`;
+const BACKEND_BASE = `${BACKEND_API}/auth/login`;
 
 export async function POST(request: Request) {
     try {

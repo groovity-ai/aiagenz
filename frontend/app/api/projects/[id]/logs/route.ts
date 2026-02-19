@@ -1,12 +1,8 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getToken } from '@/lib/auth';
+import { BACKEND_API } from '@/lib/api';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
-
-async function getToken() {
-    const cookieStore = await cookies();
-    return cookieStore.get('token')?.value;
-}
+const BACKEND_BASE = `${BACKEND_API}/projects`;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
@@ -20,6 +16,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         const text = await res.text();
         return new NextResponse(text);
     } catch (e) {
+        console.error('GET /api/projects/[id]/logs failed:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }

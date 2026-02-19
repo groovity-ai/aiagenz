@@ -1,12 +1,8 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getToken } from '@/lib/auth';
+import { BACKEND_API } from '@/lib/api';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://aiagenz-backend:4001'}/api/projects`;
-
-async function getToken() {
-    const cookieStore = await cookies();
-    return cookieStore.get('token')?.value;
-}
+const BACKEND_BASE = `${BACKEND_API}/projects`;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
@@ -17,14 +13,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         const res = await fetch(`${BACKEND_BASE}/${id}/models`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        
+
         if (!res.ok) {
             return NextResponse.json({ error: 'Failed to fetch models' }, { status: res.status });
         }
-        
+
         const data = await res.json();
         return NextResponse.json(data);
     } catch (e) {
+        console.error('GET /api/projects/[id]/models failed:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }

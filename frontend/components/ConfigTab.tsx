@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Plus, Trash2, Save, RefreshCw, Key, Bot, Eye, EyeOff, Pencil, X, ArrowUp, ArrowDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { toast } from "sonner"
 
 // IMP-7: TypeScript interfaces for config types
 interface AuthProfile {
@@ -95,18 +96,10 @@ interface ConfigTabProps {
     projectId: string
 }
 
-// IMP-4: Toast-style notification helper (replaces alert())
+// IMP-4: Toast-style notification helper (uses sonner)
 function showToast(message: string, type: 'success' | 'error' = 'success') {
-    const toast = document.createElement('div')
-    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
-        }`
-    toast.textContent = message
-    document.body.appendChild(toast)
-    setTimeout(() => {
-        toast.style.opacity = '0'
-        toast.style.transform = 'translateY(-10px)'
-        setTimeout(() => toast.remove(), 300)
-    }, 3000)
+    if (type === 'error') toast.error(message)
+    else toast.success(message)
 }
 
 // IMP-5: Centralized fetch helper with Content-Type header
@@ -947,3 +940,114 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
         </div>
     )
 }
+
+function AliasesEditor({ config, projectId, onUpdate }: {
+    config: OpenClawConfig
+    projectId: string
+    onUpdate: () => void
+}) {
+    const [aliases, setAliases] = useState<{ [key: string]: string }>({})
+    const [newAlias, setNewAlias] = useState({ key: '', value: '' })
+    const [saving, setSaving] = useState(false)
+    const [deleting, setDeleting] = useState<string | null>(null)
+
+    useEffect(() => {
+        const models = config.agents?.models || {}
+        const loadedAliases: { [key: string]: string } = {}
+        Object.entries(models).forEach(([key, val]) => {
+            if (val.alias) loadedAliases[key] = val.alias
+        })
+        setAliases(loadedAliases)
+    }, [config])
+
+    const handleSave = async () => {
+        if (!newAlias.key || !newAlias.value) return
+        setSaving(true)
+        try {
+            await apiFetch(`/api/projects/${projectId}/command`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    args: ['config', 'set', `agents.models.${newAlias.key}.alias`, newAlias.value]
+                })
+            })
+            setNewAlias({ key: '', value: '' })
+            onUpdate()
+            showToast(`Alias added: ${newAlias.value} -> ${newAlias.key}`)
+        } catch (e) {
+            showToast("Failed to add alias", "error")
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const handleDelete = async (modelKey: string) => {
+        if (!confirm(`Remove alias for ${modelKey}?`)) return
+        setDeleting(modelKey)
+        try {
+            const newConfig = JSON.parse(JSON.stringify(config))
+            if (newConfig.agents?.models?.[modelKey]) {
+                delete newConfig.agents.models[modelKey]
+                await apiFetch(`/api/projects/${projectId}/config`, {
+                    method: 'PUT',
+                    body: JSON.stringify(newConfig)
+                })
+                onUpdate()
+                showToast("Alias removed")
+            }
+        } catch (e) {
+            showToast("Failed to remove alias", "error")
+        } finally {
+            setDeleting(null)
+        }
+    }
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Model Aliases</CardTitle>
+                <CardDescription>Map long model names to short aliases for easier CLI/API usage.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                    <Input
+                        placeholder="Model ID (e.g. google/gemini-pro)"
+                        value={newAlias.key}
+                        onChange={(e) => setNewAlias({ ...newAlias, key: e.target.value })}
+                        className="flex-1"
+                    />
+                    <Input
+                        placeholder="Alias (e.g. gemini)"
+                        value={newAlias.value}
+                        onChange={(e) => setNewAlias({ ...newAlias, value: e.target.value })}
+                        className="w-32"
+                    />
+                    <Button onClick={handleSave} disabled={saving || !newAlias.key || !newAlias.value}>
+                        {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    </Button>
+                </div>
+
+                <div className="space-y-2">
+                    {Object.entries(aliases).length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">No aliases configured.</p>
+                    )}
+                    {Object.entries(aliases).map(([model, alias]) => (
+                        <div key={model} className="flex items-center justify-between p-2 border rounded-md bg-muted/20">
+                            <div className="flex flex-col">
+                                <span className="font-mono text-xs font-semibold text-primary">{alias}</span>
+                                <span className="text-[10px] text-muted-foreground">{model}</span>
+                            </div>
+                            <Button
+                                variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                                onClick={() => handleDelete(model)}
+                                disabled={deleting === model}
+                            >
+                                {deleting === model ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                            </Button>
+                        </div>
+                    ))}
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+

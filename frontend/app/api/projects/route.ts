@@ -1,23 +1,8 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getToken } from '@/lib/auth';
+import { BACKEND_API } from '@/lib/api';
 
-const BACKEND_BASE = `${process.env.BACKEND_URL || 'http://localhost:4001'}/api/projects`;
-
-// Helper to get token (Manual Auth)
-async function getToken() {
-    const cookieStore = await cookies();
-    const token = cookieStore.get('token')?.value;
-    
-    // Debug: Print all cookies
-    console.log('[Debug] Cookies received:', cookieStore.getAll().map(c => c.name));
-    if (!token) {
-        console.log('[Debug] Token is missing!');
-    } else {
-        console.log('[Debug] Token found (len):', token.length);
-    }
-    
-    return token;
-}
+const BACKEND_BASE = `${BACKEND_API}/projects`;
 
 export async function GET(request: Request) {
     const token = await getToken();
@@ -34,6 +19,7 @@ export async function GET(request: Request) {
         const data = await res.json();
         return NextResponse.json(data, { status: res.status });
     } catch (e) {
+        console.error('GET /api/projects failed:', e);
         return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
     }
 }
@@ -55,6 +41,7 @@ export async function POST(request: Request) {
         const data = await res.json();
         return NextResponse.json(data, { status: res.status });
     } catch (error) {
-        return NextResponse.json({ success: false, error: 'Internal Server Error' }, { status: 500 });
+        console.error('POST /api/projects failed:', error);
+        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }

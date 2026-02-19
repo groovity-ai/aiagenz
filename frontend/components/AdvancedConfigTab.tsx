@@ -4,21 +4,15 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Save, RefreshCw, FileJson, Shield, AlertTriangle } from "lucide-react"
+import { toast } from "sonner"
 
 interface AdvancedConfigTabProps {
   projectId: string
 }
 
 function showToast(message: string, type: 'success' | 'error' = 'success') {
-  const toast = document.createElement('div')
-  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`
-  toast.textContent = message
-  document.body.appendChild(toast)
-  setTimeout(() => {
-    toast.style.opacity = '0'
-    toast.style.transform = 'translateY(-10px)'
-    setTimeout(() => toast.remove(), 300)
-  }, 3000)
+  if (type === 'error') toast.error(message)
+  else toast.success(message)
 }
 
 type ActiveFile = 'openclaw' | 'auth'
@@ -159,8 +153,8 @@ export function AdvancedConfigTab({ projectId }: AdvancedConfigTabProps) {
               <button
                 key={tab.key}
                 className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${activeFile === tab.key
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'
                   }`}
                 onClick={() => setActiveFile(tab.key)}
               >

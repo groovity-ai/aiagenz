@@ -15,6 +15,15 @@ import { AutomationTab } from "@/components/AutomationTab"
 import { OverviewTab } from "@/components/OverviewTab"
 import { AdvancedConfigTab } from "@/components/AdvancedConfigTab"
 
+interface Project {
+    id: string
+    name: string
+    status: string
+    ttydPort?: string
+    containerID?: string
+    plan?: string
+}
+
 const Console = dynamic(() => import("@/components/Console"), {
     ssr: false,
     loading: () => <div className="h-[500px] bg-zinc-950 flex items-center justify-center text-zinc-500">Loading Terminal...</div>
@@ -23,7 +32,7 @@ const Console = dynamic(() => import("@/components/Console"), {
 export default function ProjectDetail({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params)
     const router = useRouter()
-    const [project, setProject] = useState<any>(null)
+    const [project, setProject] = useState<Project | null>(null)
     const [logs, setLogs] = useState<string>("")
     const [loading, setLoading] = useState(false)
 
@@ -45,7 +54,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                 const data = await res.json()
                 setProject(data)
             }
-        } catch (e) { }
+        } catch (e) { console.error('fetchProject failed:', e) }
     }
 
     const fetchLogs = async () => {
@@ -55,7 +64,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                 const text = await res.text()
                 setLogs(text)
             }
-        } catch (e) { }
+        } catch (e) { console.error('fetchLogs failed:', e) }
     }
 
     const handleControl = async (action: string) => {
@@ -63,6 +72,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
         try {
             await fetch(`/api/projects/${id}/control`, {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action })
             })
             fetchProject()
@@ -158,7 +168,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                     <TabsContent value="webterm" className="flex-1 h-[600px] border rounded-lg overflow-hidden bg-black">
                         {project.ttydPort ? (
                             <iframe
-                                src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${project.ttydPort}`}
+                                src={`//${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${project.ttydPort}`}
                                 className="w-full h-full border-none"
                                 title="Web Terminal"
                                 allow="clipboard-read; clipboard-write"

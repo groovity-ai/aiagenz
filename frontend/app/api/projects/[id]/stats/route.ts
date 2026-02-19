@@ -1,20 +1,23 @@
-import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:4001'
+import { NextResponse } from 'next/server';
+import { getToken } from '@/lib/auth';
+import { BACKEND_API } from '@/lib/api';
 
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await params
-    const cookieStore = await cookies()
-    const token = cookieStore.get('token')?.value
+    const { id } = await params;
+    const token = await getToken();
+    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const res = await fetch(`${BACKEND_URL}/api/projects/${id}/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-    })
-
-    const data = await res.json()
-    return NextResponse.json(data, { status: res.status })
+    try {
+        const res = await fetch(`${BACKEND_API}/projects/${id}/stats`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        return NextResponse.json(data, { status: res.status });
+    } catch (e) {
+        console.error('GET /api/projects/[id]/stats failed:', e);
+        return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
+    }
 }

@@ -6,25 +6,26 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Box, Download, RefreshCw, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 
 interface SkillsTabProps {
   projectId: string
 }
 
+interface Skill {
+  name: string
+  description?: string
+  version?: string
+  enabled?: boolean
+}
+
 function showToast(message: string, type: 'success' | 'error' = 'success') {
-  const toast = document.createElement('div')
-  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`
-  toast.textContent = message
-  document.body.appendChild(toast)
-  setTimeout(() => {
-    toast.style.opacity = '0'
-    toast.style.transform = 'translateY(-10px)'
-    setTimeout(() => toast.remove(), 300)
-  }, 3000)
+  if (type === 'error') toast.error(message)
+  else toast.success(message)
 }
 
 export function SkillsTab({ projectId }: SkillsTabProps) {
-  const [skills, setSkills] = useState<any[]>([])
+  const [skills, setSkills] = useState<Skill[]>([])
   const [loading, setLoading] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [newSkill, setNewSkill] = useState("")
@@ -42,7 +43,7 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
         const list = Array.isArray(data) ? data : (data.skills || [])
         setSkills(list)
       }
-    } catch (e) { }
+    } catch (e) { console.error('fetchSkills failed:', e) }
     setLoading(false)
   }
 
@@ -104,7 +105,7 @@ export function SkillsTab({ projectId }: SkillsTabProps) {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {skills.map((skill: any) => (
+        {skills.map((skill) => (
           <Card key={skill.name}>
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start">

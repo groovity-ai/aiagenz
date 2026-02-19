@@ -6,25 +6,27 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Clock, Trash2, RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 
 interface AutomationTabProps {
   projectId: string
 }
 
+interface CronJob {
+  id?: string
+  schedule?: { expr?: string } | string
+  payload?: { text?: string }
+  task?: string
+  enabled?: boolean
+}
+
 function showToast(message: string, type: 'success' | 'error' = 'success') {
-  const toast = document.createElement('div')
-  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all duration-300 ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`
-  toast.textContent = message
-  document.body.appendChild(toast)
-  setTimeout(() => {
-    toast.style.opacity = '0'
-    toast.style.transform = 'translateY(-10px)'
-    setTimeout(() => toast.remove(), 300)
-  }, 3000)
+  if (type === 'error') toast.error(message)
+  else toast.success(message)
 }
 
 export function AutomationTab({ projectId }: AutomationTabProps) {
-  const [jobs, setJobs] = useState<any[]>([])
+  const [jobs, setJobs] = useState<CronJob[]>([])
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
 
@@ -44,7 +46,7 @@ export function AutomationTab({ projectId }: AutomationTabProps) {
         const list = Array.isArray(data) ? data : (data.jobs || [])
         setJobs(list)
       }
-    } catch (e) { }
+    } catch (e) { console.error('fetchJobs failed:', e) }
     setLoading(false)
   }
 
@@ -120,13 +122,13 @@ export function AutomationTab({ projectId }: AutomationTabProps) {
       </Card>
 
       <div className="grid gap-4">
-        {jobs.map((job: any, i: number) => (
+        {jobs.map((job, i) => (
           <Card key={job.id || i}>
             <CardContent className="p-4 flex justify-between items-center">
               <div className="flex items-center gap-4">
                 <Clock className="h-5 w-5 text-muted-foreground" />
                 <div>
-                  <div className="font-mono text-sm font-semibold">{job.schedule?.expr || job.schedule}</div>
+                  <div className="font-mono text-sm font-semibold">{typeof job.schedule === 'object' ? job.schedule?.expr : job.schedule}</div>
                   <div className="text-sm text-muted-foreground">{job.payload?.text || job.task}</div>
                 </div>
               </div>

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +40,7 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 func (rl *RateLimiter) Middleware() func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
+			ip := extractClientIP(r)
 
 			rl.mu.Lock()
 			v, exists := rl.visitors[ip]
@@ -79,4 +81,23 @@ func (rl *RateLimiter) cleanup() {
 		}
 		rl.mu.Unlock()
 	}
+}
+
+// extractClientIP returns the client IP, preferring proxy headers if available.
+func extractClientIP(r *http.Request) string {
+	// Check X-Real-IP first (set by Nginx)
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	// Check X-Forwarded-For (first entry is the original client)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.SplitN(xff, ",", 2)
+		return strings.TrimSpace(parts[0])
+	}
+	// Fall back to RemoteAddr, stripping port
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
 }
