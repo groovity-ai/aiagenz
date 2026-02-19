@@ -255,8 +255,16 @@ func (h *ProjectHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	h.models[id] = &modelsCache{result: result, cachedAt: time.Now()}
 	h.mu.Unlock()
 
+	// Handle case where CLI returns wrapped object { "models": [...] }
+	finalResult := result
+	if m, ok := result.(map[string]interface{}); ok {
+		if list, exists := m["models"]; exists {
+			finalResult = list
+		}
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"models": result,
+		"models": finalResult,
 	})
 }
 
