@@ -221,8 +221,13 @@ func main() {
 		})
 	})
 
-	// WebSocket console (auth via query param)
+	// WebSocket console (auth via first message)
 	r.HandleFunc("/projects/{projectId}/console", consoleHandler.Handle)
+
+	// WebTerm proxy — proxies HTTP/WS to container ttyd port (auth via ?token= or Bearer header)
+	webtermHandler := ws.NewWebtermHandler(projectRepo, containerSvc, authSvc)
+	r.HandleFunc("/projects/{projectId}/webterm", webtermHandler.Handle)
+	r.HandleFunc("/projects/{projectId}/webterm/*", webtermHandler.Handle)
 
 	// Start server
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
