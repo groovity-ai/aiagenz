@@ -3,6 +3,8 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/aiagenz/backend/internal/contextkeys"
 	"github.com/aiagenz/backend/internal/domain"
@@ -10,14 +12,24 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// modelsCache holds a cached result for one project.
+type modelsCache struct {
+	result   interface{}
+	cachedAt time.Time
+}
+
+const modelsCacheTTL = 5 * time.Minute
+
 // ProjectHandler handles project HTTP endpoints.
 type ProjectHandler struct {
-	svc *service.ProjectService
+	svc    *service.ProjectService
+	mu     sync.Mutex
+	models map[string]*modelsCache // key: projectID
 }
 
 // NewProjectHandler creates a new ProjectHandler.
 func NewProjectHandler(svc *service.ProjectService) *ProjectHandler {
-	return &ProjectHandler{svc: svc}
+	return &ProjectHandler{svc: svc, models: make(map[string]*modelsCache)}
 }
 
 // Create handles POST /api/projects.
@@ -208,15 +220,30 @@ func (h *ProjectHandler) UpdateRuntimeConfig(w http.ResponseWriter, r *http.Requ
 }
 
 // GetModels handles GET /projects/{id}/models.
+// Results are cached per-project for 5 minutes (openclaw models list --all is slow: fetches from provider APIs).
 func (h *ProjectHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
 	id := chi.URLParam(r, "id")
+
+	// Check cache first
+	h.mu.Lock()
+	cached, ok := h.models[id]
+	h.mu.Unlock()
+	if ok && time.Since(cached.cachedAt) < modelsCacheTTL {
+		JSON(w, http.StatusOK, map[string]interface{}{"models": cached.result, "cached": true})
+		return
+	}
 
 	result, err := h.svc.RunOpenClawCommand(r.Context(), id, userID, []string{"models", "list", "--all", "--json"})
 	if err != nil {
 		Error(w, err)
 		return
 	}
+
+	// Store in cache
+	h.mu.Lock()
+	h.models[id] = &modelsCache{result: result, cachedAt: time.Now()}
+	h.mu.Unlock()
 
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"models": result,
