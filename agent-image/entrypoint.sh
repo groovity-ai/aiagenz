@@ -35,7 +35,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "workspace": "/home/node/workspace"
     }
   },
-  },
   "channels": {
     "telegram": {
       "enabled": $TELEGRAM_ENABLED,
