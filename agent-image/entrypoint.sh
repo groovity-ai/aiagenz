@@ -73,11 +73,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "channels": {
     "telegram": {
       "enabled": $TELEGRAM_ENABLED,
-$(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "      \"botToken\": \"$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN\","; fi)
-      "dmPolicy": "open",
-      "groupPolicy": "allowlist",
-      "allowFrom": ["*"],
-      "streamMode": "partial"
+      "accounts": {
+        "default": {
+$(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "          \"botToken\": \"$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN\","; fi)
+          "dmPolicy": "open",
+          "groupPolicy": "allowlist",
+          "allowFrom": ["*"],
+          "streamMode": "partial"
+        }
+      }
     }
   },
   "gateway": {

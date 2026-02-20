@@ -46,7 +46,7 @@ const DEPLOY_STAGES = [
 ]
 
 const PROVIDERS = {
-    google: ["google/google/gemini-3-flash-preview", "google/gemini-3-pro-preview"],
+    google: ["google/gemini-3-flash-preview", "google/gemini-3-pro-preview"],
     openai: ["openai/gpt-4o", "openai/gpt-3.5-turbo"],
     anthropic: ["anthropic/claude-3-5-sonnet"],
     "google-antigravity": ["google-antigravity/gemini-3-pro-high", "google-antigravity/gemini-3-pro-low"]

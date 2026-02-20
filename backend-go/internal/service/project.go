@@ -113,7 +113,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 		profileKey := req.Provider + ":default"
 		initialAuth["profiles"].(map[string]interface{})[profileKey] = map[string]interface{}{
 			"provider": req.Provider,
-			"mode":     "api_key",
+			"type":     "api_key",
 			"key":      req.APIKey,
 		}
 	}
