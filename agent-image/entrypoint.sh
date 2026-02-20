@@ -55,7 +55,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
         "workspace": "/home/node/workspace",
         "model": "$DEFAULT_MODEL",
         "identity": {
-          "name": "Agent",
+          "name": "${OPENCLAW_AGENT_NAME:-Agent}",
           "emoji": "🤖"
         }
       }

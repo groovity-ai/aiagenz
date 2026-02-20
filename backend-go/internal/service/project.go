@@ -57,7 +57,7 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 	}
 
 	// Build env vars for the container (no secrets — those are pushed via Bridge)
-	env := s.buildEnvVars(projectID, req)
+	env := s.buildEnvVars(projectID, req.Name, req)
 
 	// Encrypt config before storing
 	configJSON, _ := json.Marshal(domain.ProjectConfig{
@@ -1059,7 +1059,7 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 		APIKey:        currentConfig.APIKey,
 		Model:         currentConfig.Model,
 	}
-	env := s.buildEnvVars(project.ID, createReq)
+	env := s.buildEnvVars(project.ID, project.Name, createReq)
 
 	// 3. Prepare Image & Resources
 	image := project.ImageName
@@ -1111,7 +1111,7 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 	return s.repo.UpdateStatus(ctx, project.ID, "running", &containerID)
 }
 
-func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjectRequest) []string {
+func (s *ProjectService) buildEnvVars(projectID string, projectName string, req *domain.CreateProjectRequest) []string {
 	// Env vars are the PRIMARY config injection path (works even when Bridge is unreachable).
 	// Bridge is used as a BONUS fast-path for runtime updates when networking allows.
 	env := []string{
@@ -1122,6 +1122,8 @@ func (s *ProjectService) buildEnvVars(projectID string, req *domain.CreateProjec
 		"OPENCLAW_GATEWAY_BIND=auto",
 		// Give each agent a unique name for Bonjour/mDNS discovery (prevents hostname conflicts)
 		"OPENCLAW_GATEWAY_NAME=aiagenz-" + projectID[:8],
+		// Pass project name for agent identity
+		"OPENCLAW_AGENT_NAME=" + projectName,
 		"OPENCLAW_DOCTOR=false",
 		"OPENCLAW_SKIP_DOCTOR=true",
 	}
