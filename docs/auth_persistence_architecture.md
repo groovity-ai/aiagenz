@@ -1,147 +1,138 @@
 # Auth / API Key Persistence Architecture
 
-Documents the complete auth flow in AiAgenz — from user input to OpenClaw reading the key.
+Documents the complete authentication flow in AiAgenz — tracking how user-supplied API keys travel from the dashboard to the OpenClaw agent instance, focusing on how keys are persisted and securely configured.
 
 ---
 
-## 1. File Ownership
+## 1. File Ownership & Split Architecture
 
-Two files manage auth state inside each agent container:
+AiAgenz uses a **Split & Sanitize** pattern to manage authentication state across two files. OpenClaw exerts strict schema validation, so keys and metadata must be rigidly separated.
 
 | File | Path | Owner | Purpose |
 |---|---|---|---|
-| `openclaw.json` | `/home/node/.openclaw/openclaw.json` | **OpenClaw** | Primary config. OpenClaw reads `auth.profiles` from here on startup/reload. |
-| `auth-profiles.json` | `/home/node/.openclaw/agents/main/agent/auth-profiles.json` | **Bridge** | Mirror of profiles for dashboard display. OpenClaw may also read this. |
+| `openclaw.json` | `/home/node/.openclaw/openclaw.json` | **OpenClaw (Strict)** | Primary config. Stores agent profile **metadata** (provider, mode). **NO KEYS ALLOWED**. |
+| `auth-profiles.json` | `/home/node/.openclaw/agents/main/agent/auth-profiles.json` | **Bridge (Secure)** | Secure key store. Stores **keys** alongside provider metadata. Read by both the Bridge and OpenClaw plugin. |
 
-> [!IMPORTANT]
-> OpenClaw OWNS `openclaw.json`. On SIGHUP restart it will re-read this file. Any key not stored here will be lost on restart.
+> [!WARNING]
+> OpenClaw heavily validates `openclaw.json`. Setting unknown keys (like `type: "api_key"`) or invalid enums (like `mode: "api_key"`) will cause OpenClaw to flag the config as **Invalid** and reset it during a SIGHUP or restart.
 
 ---
 
 ## 2. Data Flow: Adding an API Key
 
+When a user adds an API key from the web dashboard, the data follows a precise execution path:
+
 ```
-User (Dashboard)
-  → POST /api/projects/{id}/auth/add  { provider: "google", key: "AIza..." }
-    → Next.js (proxy)
-      → Go Backend (AuthAdd handler @ handler/project.go:456)
-        → service.Update() → saves to DB (encrypted)
-        → service.UpdateRuntimeConfig() → calls bridge
-          → Bridge POST /config/update
-            ├── Writes key to openclaw.json  auth.profiles.google:default.key = "AIza..."  ← PRIMARY
-            ├── Mirrors key to auth-profiles.json                                           ← DISPLAY
-            └── Sends SIGHUP to OpenClaw parent process (reload)
-              → OpenClaw rereads openclaw.json → key is present → uses it ✅
+User (Dashboard Editor)
+  → POST /api/projects/{id}/auth/add  { provider: "openai", key: "sk-..." }
+    → Next.js (Proxy Route)
+      → Go Backend (AuthAdd handler @ handler/project.go)
+        → service.Update() → Encrypts and persists to PostgreSQL
+        → service.UpdateRuntimeConfig() → Forwards to AiAgenz Bridge
+          → Bridge POST /auth/add (Split & Sanitize logic):
+            ├── 1. Writes pure metadata to openclaw.json:
+            │      auth.profiles.openai:default = { provider: "openai", mode: "token" }
+            ├── 2. Writes full key data to auth-profiles.json:
+            │      profiles.openai:default = { provider: "openai", type: "api_key", key: "sk-..." }
+            └── 3. Issues SIGHUP to OpenClaw parent process
+              → OpenClaw re-reads openclaw.json (metadata) and auth-profiles.json (keys)
+              → Configuration is merged internally by OpenClaw → ✅ Key active
 ```
 
 ---
 
-## 3. Config File Formats
+## 3. Strict Config File Schemas
 
-### `openclaw.json` (Primary — OpenClaw reads this)
+To prevent OpenClaw from flagging `Invalid Config`, these exact schemas must be followed.
+
+### `openclaw.json` (Metadata Only — No Keys)
+OpenClaw only accepts `mode: "token"` or `mode: "oauth"`. It will reject `mode: "api_key"` and the `type` field.
 ```json
 {
   "auth": {
     "profiles": {
       "google:default": {
         "provider": "google",
-        "mode": "api_key",
-        "key": "AIza..."
+        "mode": "token"
+      },
+      "openai:default": {
+        "provider": "openai",
+        "mode": "token"
       }
     }
   }
 }
 ```
 
-### `auth-profiles.json` (Mirror — Bridge reads for dashboard display)
+### `auth-profiles.json` (Key Store)
+Uses `type: "api_key"` and requires the `version: 1` header to instruct OpenClaw to read it properly.
 ```json
 {
+  "version": 1,
   "profiles": {
     "google:default": {
+      "type": "api_key",
       "provider": "google",
-      "mode": "api_key",
       "key": "AIza..."
+    },
+    "openai:default": {
+      "type": "api_key",
+      "provider": "openai",
+      "key": "sk-..."
     }
   }
 }
 ```
 
-> [!NOTE]
-> OpenClaw's **native** format for this file has `{ "version": 1, "profiles": { ... } }` without a `key` field. If OpenClaw regenerates this file (e.g., after a clean start), it will overwrite the key. This is why keys must live in `openclaw.json`.
-
 ---
 
-## 4. Bridge Endpoints Reference
+## 4. Bridge API Responsibility
 
-| Endpoint | What it does |
+The `aiagenz-bridge` plugin (node.js) orchestrates the safe-handling of keys between the frontend and OpenClaw.
+
+| Endpoint | Action & Schema Handling |
 |---|---|
-| `GET /config` | Reads `openclaw.json` (primary), fills missing profiles from `auth-profiles.json`. Returns merged config. |
-| `POST /config/update` | Merges incoming update into `openclaw.json`. Mirrors `auth.profiles` to `auth-profiles.json`. **Does NOT strip profiles before writing.** |
-| `POST /auth/add` | Dual-writes `{ provider, mode, key }` to both `openclaw.json` auth.profiles AND `auth-profiles.json`. Sends SIGHUP. |
+| **`GET /config`** | Merges data for the Frontend. Reads `openclaw.json` (primary metadata), then injects missing keys from `auth-profiles.json` so the dashboard displays them properly. |
+| **`POST /config/update`** | **Sanitization Filter:** Extracts `auth.profiles` from the payload. Writes the raw keys to `auth-profiles.json`, strips the keys/`type` field, converts `mode` to `"token"`, and writes ONLY metadata to `openclaw.json`. |
+| **`POST /auth/add`** | Explicit add handler. Performs the exact same split-and-sanitize procedure as `POST /config/update` but specifically tuned for initial provisioning. |
 
 ---
 
-## 5. The Bug History (Root Cause for Future Reference)
+## 5. Next.js Proxy Routes (Critical Path)
 
-Three layered bugs caused API keys to silently reset:
+For the dashboard to securely communicate with the remote Go backend, missing reverse-proxy routes in Next.js will cause silent `404 Not Found` API failures during `ConfigTab` saves. 
 
-### Bug 1 — `entrypoint.sh` moved auth OUT of `openclaw.json`
-```diff
-# Changed during session — WRONG:
-- "auth": { "profiles": { "google:default": {...} } }  ← removed from openclaw.json
-
-# Fixed: auth.profiles is back inside openclaw.json
-```
-**Effect**: OpenClaw couldn't find `auth.profiles` in openclaw.json → regenerated with `{ version: 1, profiles: {...empty...} }` on SIGHUP.
-
-### Bug 2 — `GET /config` overwrote openclaw.json auth with auth-profiles.json
-```diff
-# Wrong: this clobbers the key-bearing openclaw.json auth with the empty mirror
-- config.auth.profiles = auth.profiles;  // ← blind overwrite
-
-# Fixed: only fill MISSING keys from auth-profiles.json
-+ for (const [k, v] of Object.entries(auth.profiles)) {
-+     if (!config.auth.profiles[k]) config.auth.profiles[k] = v;
-+ }
-```
-
-### Bug 3 — `POST /config/update` stripped profiles before writing to `openclaw.json`
-```diff
-# This was the critical bug: service.Update() sent the key in auth.profiles
-# but bridge deleted it before writing to openclaw.json
-- delete updates.auth.profiles;  // ← KEY WAS STRIPPED HERE
-
-# Fixed: removed this line — profiles (with keys) now persist in openclaw.json
-```
+The following routes physically map React dashboard buttons to the Go execution core:
+- `frontend/app/api/projects/[id]/auth/add/route.ts` → Traverses to `POST /projects/:id/auth/add`
+- `frontend/app/api/projects/[id]/auth/login/route.ts` → OAuth initiation
+- `frontend/app/api/projects/[id]/auth/callback/route.ts` → OAuth resolution
 
 ---
 
-## 6. Initialization: `entrypoint.sh`
+## 6. Initialization Sequence (`entrypoint.sh`)
 
-On **first container start** (when `openclaw.json` doesn't exist):
+When a new agent container is started, the `entrypoint.sh` bash script generates the zero-state configurations.
+
+1. **`openclaw.json`** is generated with **NO auth profiles block at all**.
+2. **`auth-profiles.json`** is generated with default template placeholders.
 ```bash
-# Generates openclaw.json WITH empty auth profiles
-"auth": {
-    "profiles": {
-        "google:default": { "provider": "google", "mode": "api_key" },
-        "openai:default":  { "provider": "openai",  "mode": "api_key" },
-        "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
-    }
+cat > "$AUTH_PROFILES_FILE" <<EOF
+{
+  "version": 1,
+  "profiles": {
+    "google:default": { "type": "api_key", "provider": "google" },
+    "openai:default": { "type": "api_key", "provider": "openai" },
+    "anthropic:default": { "type": "api_key", "provider": "anthropic" }
+  }
 }
+EOF
 ```
-
-On **restart** (file exists):
-```bash
-echo "✅ Config found. Skipping generation to preserve user changes."
-# File is NOT regenerated — user keys are safe ✅
-```
+*Note: We do not put empty keys or invalid `mode` properties into `openclaw.json` during bootstrap, avoiding `openclaw doctor` strict validation warnings.*
 
 ---
 
-## 7. Key Points for Developers
+## 7. Development Rules & Anti-Patterns
 
-1. **Never `delete updates.auth.profiles`** in the bridge — this strips keys before they reach openclaw.json.
-2. **The `POST /auth/add` bridge endpoint** is the source of truth for saving keys. It dual-writes to both files.
-3. **SIGHUP causes OpenClaw to re-read `openclaw.json`** — so the key MUST be in that file to survive a reload.
-4. **`auth-profiles.json`** is for dashboard display mirroring only — do not rely on it as the primary store.
-5. **The `version: 1` field** in an auth-profiles file means OpenClaw generated it natively (no key). This is a sign the file was overwritten.
+1. **Do not write `key` or `apiKey` into Go's GetRuntimeConfig profiles.** The Go backend should only return `mode: "token"` and `provider`. The Bridge is specifically responsible for orchestrating key injection.
+2. **Do not use `mode: "api_key"` globally.** `mode: "api_key"` only exists conceptually. OpenClaw internally validates `mode: "token"`. If you write `api_key` to `openclaw.json`, the container doctor will fail.
+3. **Array.isArray Guards:** The Go backend executes the `openclaw` CLI. If the CLI outputs string text (like `Invalid Config`) instead of JSON array structures, the UI will crash if it attempts `availableModels.map()`. **Always use `Array.isArray(models)`** in React components to prevent silent death.
