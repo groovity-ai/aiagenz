@@ -977,6 +977,9 @@ func mapDiscordConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) 
 }
 
 func mapSlackConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if channelObj["mode"] == nil {
+		channelObj["mode"] = "socket"
+	}
 	if defaultAcc["dmPolicy"] == nil {
 		defaultAcc["dmPolicy"] = "open"
 	}
@@ -1026,6 +1029,9 @@ func mapWhatsAppConfig(channelObj, defaultAcc, reqConfig map[string]interface{})
 }
 
 func mapSignalConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if channelObj["cliPath"] == nil {
+		channelObj["cliPath"] = "signal-cli"
+	}
 	if channelObj["dmPolicy"] == nil {
 		channelObj["dmPolicy"] = "pairing"
 	}
