@@ -761,10 +761,21 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			}
 		}
 
-		// 3. Inject Telegram (nested format)
+		// 3. Inject Channels (Merge with existing config from Volume/Defaults)
+		if config["channels"] == nil {
+			config["channels"] = make(map[string]interface{})
+		}
+
+		if dbConfig.Channels != nil {
+			config["channels"] = deepMergeMap(config["channels"].(map[string]interface{}), dbConfig.Channels)
+		}
+
+		chMap := config["channels"].(map[string]interface{})
+
+		// Backward compatibility: inject legacy token ONLY IF telegram block is entirely missing
 		if dbConfig.TelegramToken != "" {
-			config["channels"] = map[string]interface{}{
-				"telegram": map[string]interface{}{
+			if _, hasTg := chMap["telegram"]; !hasTg {
+				chMap["telegram"] = map[string]interface{}{
 					"enabled": true,
 					"accounts": map[string]interface{}{
 						"default": map[string]interface{}{
@@ -775,7 +786,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 							"streamMode": "partial",
 						},
 					},
-				},
+				}
 			}
 		}
 
@@ -1307,24 +1318,15 @@ func sanitizeError(msg string) string {
 }
 
 func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Project, runtimeConfig map[string]interface{}) {
-	var telegramToken string
+	var channelsBlock map[string]interface{}
 	if channels, ok := runtimeConfig["channels"].(map[string]interface{}); ok {
-		if telegram, ok := channels["telegram"].(map[string]interface{}); ok {
-			if accounts, ok := telegram["accounts"].(map[string]interface{}); ok {
-				if def, ok := accounts["default"].(map[string]interface{}); ok {
-					if val, ok := def["botToken"].(string); ok {
-						telegramToken = val
-					}
-				}
-			}
-		}
+		channelsBlock = channels
 	}
 
 	var provider, apiKey string
 	if auth, ok := runtimeConfig["auth"].(map[string]interface{}); ok {
 		if profiles, ok := auth["profiles"].(map[string]interface{}); ok {
-			// Find first available profile (Simple sync for now)
-			// TODO: Support multiple profiles in DB structure
+			// Find first available profile
 			for _, v := range profiles {
 				if prof, ok := v.(map[string]interface{}); ok {
 					if p, ok := prof["provider"].(string); ok {
@@ -1333,7 +1335,6 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 					if k, ok := prof["key"].(string); ok {
 						apiKey = k
 					}
-					// Break after finding one (Primary)
 					if provider != "" && apiKey != "" {
 						break
 					}
@@ -1342,7 +1343,7 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 		}
 	}
 
-	// Update DB if any value found
+	// Fetch existing DB Config
 	var dbConfig domain.ProjectConfig
 	if project.Config != nil {
 		decrypted, err := s.enc.Decrypt(string(project.Config))
@@ -1352,17 +1353,31 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 	}
 
 	changed := false
-	if telegramToken != "" {
-		dbConfig.TelegramToken = telegramToken
+	if channelsBlock != nil {
+		dbConfig.Channels = channelsBlock
 		changed = true
 	}
-	if provider != "" {
+	if provider != "" && dbConfig.Provider != provider {
 		dbConfig.Provider = provider
 		changed = true
 	}
-	if apiKey != "" {
+	if apiKey != "" && dbConfig.APIKey != apiKey {
 		dbConfig.APIKey = apiKey
 		changed = true
+	}
+
+	// Keep Legacy fallback synced for older queries
+	if dbConfig.Channels != nil {
+		if tg, ok := dbConfig.Channels["telegram"].(map[string]interface{}); ok {
+			if acc, ok := tg["accounts"].(map[string]interface{}); ok {
+				if def, ok := acc["default"].(map[string]interface{}); ok {
+					if bt, ok := def["botToken"].(string); ok && bt != dbConfig.TelegramToken {
+						dbConfig.TelegramToken = bt
+						changed = true
+					}
+				}
+			}
+		}
 	}
 
 	if changed {

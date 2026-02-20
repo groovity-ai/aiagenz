@@ -25,18 +25,20 @@ type Project struct {
 
 // ProjectConfig holds sensitive configuration for a project.
 type ProjectConfig struct {
-	TelegramToken string `json:"telegramToken,omitempty"`
-	APIKey        string `json:"apiKey,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	Model         string `json:"model,omitempty"`
+	TelegramToken string                 `json:"telegramToken,omitempty"`
+	APIKey        string                 `json:"apiKey,omitempty"`
+	Provider      string                 `json:"provider,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Channels      map[string]interface{} `json:"channels,omitempty"`
 }
 
 // SafeProjectConfig returns masked config for API responses.
 type SafeProjectConfig struct {
-	TelegramToken string `json:"telegramToken,omitempty"`
-	APIKey        string `json:"apiKey,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	Model         string `json:"model,omitempty"`
+	TelegramToken string                 `json:"telegramToken,omitempty"`
+	APIKey        string                 `json:"apiKey,omitempty"`
+	Provider      string                 `json:"provider,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Channels      map[string]interface{} `json:"channels,omitempty"`
 }
 
 // ProjectResponse is the API response for a project.
