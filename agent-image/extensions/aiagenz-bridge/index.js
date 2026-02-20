@@ -123,10 +123,13 @@ const handlers = {
                 // Write full profiles (with key) to auth-profiles.json
                 for (const [k, v] of Object.entries(profiles)) {
                     if (v && typeof v === 'object') {
+                        const existingKey = currentAuth.profiles[k]?.key;
+                        const newKey = v.key || existingKey; // Retain existing key if none provided
+
                         currentAuth.profiles[k] = {
                             type: v.type || v.mode || 'api_key',  // auth-profiles uses 'type'
                             provider: v.provider,
-                            ...(v.key ? { key: v.key } : {}),
+                            ...(newKey ? { key: newKey } : {}),
                         };
                     }
                 }
