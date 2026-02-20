@@ -45,6 +45,12 @@ func (h *WebtermHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Authenticate
 	token := r.URL.Query().Get("token")
 	if token == "" {
+		// Try Cookie
+		if cookie, err := r.Cookie("token"); err == nil && cookie != nil {
+			token = cookie.Value
+		}
+	}
+	if token == "" {
 		// Also accept Authorization: Bearer <token>
 		auth := r.Header.Get("Authorization")
 		if strings.HasPrefix(auth, "Bearer ") {
