@@ -20,12 +20,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
         TELEGRAM_ENABLED="true"
     fi
 
+    # Detect OpenClaw version dynamically
+    OPENCLAW_VERSION=$(node /app/openclaw.mjs --version 2>/dev/null || echo "unknown")
+
     DEFAULT_MODEL="${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
 
     cat > "$CONFIG_FILE" <<EOF
 {
   "meta": {
-    "lastTouchedVersion": "2026.2.14",
+    "lastTouchedVersion": "$OPENCLAW_VERSION",
     "lastTouchedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   },
   "auth": {
