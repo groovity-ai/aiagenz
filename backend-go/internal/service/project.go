@@ -252,28 +252,10 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					telegram = make(map[string]interface{})
 					channels["telegram"] = telegram
 				}
+
+				// Flat format — botToken directly on channel (no accounts.default nesting)
 				telegram["enabled"] = true
-
-				if telegram["accounts"] == nil {
-					telegram["accounts"] = make(map[string]interface{})
-				}
-				accounts, ok := telegram["accounts"].(map[string]interface{})
-				if !ok {
-					accounts = make(map[string]interface{})
-					telegram["accounts"] = accounts
-				}
-
-				if accounts["default"] == nil {
-					accounts["default"] = make(map[string]interface{})
-				}
-				def, ok := accounts["default"].(map[string]interface{})
-				if !ok {
-					def = make(map[string]interface{})
-					accounts["default"] = def
-				}
-
-				// Set botToken
-				def["botToken"] = currentConfig.TelegramToken
+				telegram["botToken"] = currentConfig.TelegramToken
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
@@ -302,6 +284,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					"provider": currentConfig.Provider,
 					"mode":     "api_key",
 					"key":      currentConfig.APIKey,
+					"apiKey":   currentConfig.APIKey,
 				}
 
 				// Update Auth Order
@@ -653,43 +636,79 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			}
 		}
 
-		// 1. Base Standard Config (Mirrors OpenClaw Defaults)
+		// 1. Base Standard Config (Mirrors Working OpenClaw Config)
+		defaultModel := "google/gemini-3-flash-preview"
 		config = map[string]interface{}{
 			"meta": map[string]interface{}{
 				"lastTouchedVersion": "2026.2.14",
 				"lastTouchedAt":      time.Now().Format(time.RFC3339),
 			},
-			"gateway": map[string]interface{}{
-				"port": 18789,
-				"mode": "local",
-				"bind": "auto",
-				"auth": map[string]interface{}{
-					"mode":  "token",
-					"token": project.ID, // Use Project ID as Gateway Token
+			"auth": map[string]interface{}{
+				"profiles": map[string]interface{}{
+					"google:default":    map[string]interface{}{"provider": "google", "mode": "api_key"},
+					"openai:default":    map[string]interface{}{"provider": "openai", "mode": "api_key"},
+					"anthropic:default": map[string]interface{}{"provider": "anthropic", "mode": "api_key"},
 				},
 			},
 			"agents": map[string]interface{}{
 				"defaults": map[string]interface{}{
 					"model": map[string]interface{}{
-						"primary": "google/gemini-3-flash-preview", // Default fallback
+						"primary": defaultModel,
 					},
-					"workspace": "/app/workspace",
+					"models": map[string]interface{}{
+						defaultModel: map[string]interface{}{},
+					},
+					"workspace":     "/home/node/workspace",
+					"compaction":    map[string]interface{}{"mode": "safeguard"},
+					"maxConcurrent": 2,
+					"subagents":     map[string]interface{}{"maxConcurrent": 4},
+				},
+				"list": []interface{}{
+					map[string]interface{}{
+						"id":        "main",
+						"default":   true,
+						"workspace": "/home/node/workspace",
+						"model":     defaultModel,
+						"identity": map[string]interface{}{
+							"name":  "Agent",
+							"emoji": "🤖",
+						},
+					},
+				},
+			},
+			"bindings": []interface{}{
+				map[string]interface{}{
+					"agentId": "main",
+					"match":   map[string]interface{}{"channel": "telegram"},
+				},
+			},
+			"commands": map[string]interface{}{
+				"native":       "auto",
+				"nativeSkills": "auto",
+			},
+			"messages": map[string]interface{}{
+				"ackReactionScope": "group-mentions",
+			},
+			"channels": map[string]interface{}{},
+			"gateway": map[string]interface{}{
+				"port": 18789,
+				"mode": "local",
+				"auth": map[string]interface{}{
+					"mode":  "token",
+					"token": project.ID,
 				},
 			},
 			"plugins": map[string]interface{}{
 				"entries": map[string]interface{}{
-					"aiagenz-bridge": map[string]interface{}{"enabled": true}, // CRITICAL
+					"aiagenz-bridge": map[string]interface{}{"enabled": true},
 					"telegram":       map[string]interface{}{"enabled": true},
 				},
-			},
-			"channels": map[string]interface{}{},
-			"auth": map[string]interface{}{
-				"profiles": map[string]interface{}{},
 			},
 		}
 
 		// 2. Inject Model
 		if dbConfig.Model != "" {
+			defaultModel = dbConfig.Model
 			if agents, ok := config["agents"].(map[string]interface{}); ok {
 				if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
 					if model, ok := defaults["model"].(map[string]interface{}); ok {
@@ -699,19 +718,16 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			}
 		}
 
-		// 3. Inject Telegram
+		// 3. Inject Telegram (flat format)
 		if dbConfig.TelegramToken != "" {
 			config["channels"] = map[string]interface{}{
 				"telegram": map[string]interface{}{
-					"enabled": true,
-					"accounts": map[string]interface{}{
-						"default": map[string]interface{}{
-							"enabled":     true,
-							"botToken":    dbConfig.TelegramToken,
-							"groupPolicy": "allowlist",
-							"allowFrom":   []string{"*"},
-						},
-					},
+					"enabled":     true,
+					"botToken":    dbConfig.TelegramToken,
+					"dmPolicy":    "open",
+					"groupPolicy": "allowlist",
+					"allowFrom":   []string{"*"},
+					"streamMode":  "partial",
 				},
 			}
 		}
@@ -725,14 +741,12 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			profiles, _ := auth["profiles"].(map[string]interface{})
 
 			profileKey := dbConfig.Provider + ":default"
-			// Only inject if not exists (preserve user edits if any) - Force update to ensure Mode is correct
-			// if profiles[profileKey] == nil {
 			profiles[profileKey] = map[string]interface{}{
 				"mode":     "api_key",
 				"provider": dbConfig.Provider,
 				"key":      dbConfig.APIKey,
+				"apiKey":   dbConfig.APIKey,
 			}
-			// }
 
 			// Ensure Auth Order exists and includes this profile
 			if config["auth"] == nil {

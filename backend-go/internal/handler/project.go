@@ -378,7 +378,6 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("🔍 AddChannel Request: Type=%s, Config=%+v\n", req.Type, req.Config)
 
 	// APPROACH: Use Read-Modify-Write via GetRuntimeConfig/UpdateRuntimeConfig
-	// This is more reliable than 'openclaw config set' CLI which can be flaky or fail on nested paths.
 
 	// 1. Get current config
 	config, err := h.svc.GetRuntimeConfig(r.Context(), id, userID)
@@ -387,13 +386,12 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Initialize map structure if missing (Safe Deep Map Access)
+	// 2. Initialize map structure if missing
 	if config["channels"] == nil {
 		config["channels"] = make(map[string]interface{})
 	}
 	channels, ok := config["channels"].(map[string]interface{})
 	if !ok {
-		// Reset if invalid type
 		channels = make(map[string]interface{})
 		config["channels"] = channels
 	}
@@ -410,45 +408,25 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	// 3. Set Enabled = true
 	channelObj["enabled"] = true
 
-	// 4. Set Config Values (accounts.default...)
+	// 4. Merge config directly into channel (FLAT format — no accounts.default nesting)
 	if len(req.Config) > 0 {
-		if channelObj["accounts"] == nil {
-			channelObj["accounts"] = make(map[string]interface{})
-		}
-		accounts, ok := channelObj["accounts"].(map[string]interface{})
-		if !ok {
-			accounts = make(map[string]interface{})
-			channelObj["accounts"] = accounts
-		}
-
-		if accounts["default"] == nil {
-			accounts["default"] = make(map[string]interface{})
-		}
-		defAccount, ok := accounts["default"].(map[string]interface{})
-		if !ok {
-			defAccount = make(map[string]interface{})
-			accounts["default"] = defAccount
-		}
-
-		// Merge provided config into default account (handle strings, booleans, numbers)
 		for k, v := range req.Config {
 			switch val := v.(type) {
 			case string:
 				if val != "" {
-					// Normalize key: if key is "token", change to "botToken" for OpenClaw v2+
+					// Normalize: "token" → "botToken" for Telegram
 					if k == "token" && req.Type == "telegram" {
-						defAccount["botToken"] = val
+						channelObj["botToken"] = val
 					} else {
-						defAccount[k] = val
+						channelObj[k] = val
 					}
 				}
 			case bool:
-				defAccount[k] = val // e.g. enabled: true/false from toggle
+				channelObj[k] = val
 			case float64:
-				defAccount[k] = val // JSON numbers
+				channelObj[k] = val
 			}
 		}
-
 	}
 
 	// 5. Save Config

@@ -14,26 +14,19 @@ mkdir -p "$STATE_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "⚠️ Config not found at $CONFIG_FILE. Generating initial config from Env Vars..."
     
-    # Generate default config (env vars are PRIMARY injection path — Bridge is bonus)
     # Determine telegram enabled state based on token presence
     TELEGRAM_ENABLED="false"
     if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then
         TELEGRAM_ENABLED="true"
     fi
-    
+
+    DEFAULT_MODEL="${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
+
     cat > "$CONFIG_FILE" <<EOF
 {
   "meta": {
     "lastTouchedVersion": "2026.2.14",
     "lastTouchedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
-      },
-      "workspace": "/home/node/workspace"
-    }
   },
   "auth": {
     "profiles": {
@@ -42,17 +35,53 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
     }
   },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "$DEFAULT_MODEL"
+      },
+      "models": {
+        "$DEFAULT_MODEL": {}
+      },
+      "workspace": "/home/node/workspace",
+      "compaction": { "mode": "safeguard" },
+      "maxConcurrent": 2,
+      "subagents": { "maxConcurrent": 4 }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "workspace": "/home/node/workspace",
+        "model": "$DEFAULT_MODEL",
+        "identity": {
+          "name": "Agent",
+          "emoji": "🤖"
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": { "channel": "telegram" }
+    }
+  ],
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
   "channels": {
     "telegram": {
       "enabled": $TELEGRAM_ENABLED,
-      "accounts": {
-        "default": {
-          "enabled": $TELEGRAM_ENABLED,
-$(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "          \"botToken\": \"$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN\","; fi)
-          "groupPolicy": "allowlist",
-          "allowFrom": ["*"]
-        }
-      }
+$(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "      \"botToken\": \"$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN\","; fi)
+      "dmPolicy": "open",
+      "groupPolicy": "allowlist",
+      "allowFrom": ["*"],
+      "streamMode": "partial"
     }
   },
   "gateway": {
@@ -71,6 +100,7 @@ $(if [ -n "$OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN" ]; then echo "
   }
 }
 EOF
+
     echo "✅ Initial config generated."
 else
     echo "✅ Config found at $CONFIG_FILE. Skipping generation to preserve user changes."
