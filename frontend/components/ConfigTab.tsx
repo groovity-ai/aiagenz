@@ -232,7 +232,7 @@ function GeneralEditor({ config, projectId, availableModels, onUpdate }: {
                             onChange={(e) => setModel(e.target.value)}
                         >
                             <option value="" disabled>Select a model...</option>
-                            {availableModels.length > 0 ? (
+                            {Array.isArray(availableModels) && availableModels.length > 0 ? (
                                 availableModels.map((m) => {
                                     const val = m.key || `${m.provider}/${m.id}`
                                     const label = m.name || m.id || val
