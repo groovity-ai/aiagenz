@@ -153,10 +153,15 @@ func (s *ProjectService) Create(ctx context.Context, userID string, req *domain.
 				}
 			}
 			if req.Model != "" {
+				safeModel := req.Model
+				if !strings.Contains(safeModel, "/") {
+					log.Printf("[WARN] Create: Invalid model format '%s', forcing fallback", safeModel)
+					safeModel = "google/gemini-3-flash-preview"
+				}
 				configPayload["agents"] = map[string]interface{}{
 					"defaults": map[string]interface{}{
 						"model": map[string]interface{}{
-							"primary": req.Model,
+							"primary": safeModel,
 						},
 					},
 				}
@@ -739,11 +744,18 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 		// 2. Inject Model
 		if dbConfig.Model != "" {
-			defaultModel = dbConfig.Model
+			safeModel := dbConfig.Model
+			// OpenClaw crashes if model doesn't contain a provider slash (e.g. "google/gemini").
+			if !strings.Contains(safeModel, "/") {
+				log.Printf("[WARN] Invalid model format '%s', forcing fallback default", safeModel)
+				safeModel = "google/gemini-3-flash-preview" // or gemini-2.5-flash
+			}
+
+			defaultModel = safeModel
 			if agents, ok := config["agents"].(map[string]interface{}); ok {
 				if defaults, ok := agents["defaults"].(map[string]interface{}); ok {
 					if model, ok := defaults["model"].(map[string]interface{}); ok {
-						model["primary"] = dbConfig.Model
+						model["primary"] = safeModel
 					}
 				}
 			}
