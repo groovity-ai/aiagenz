@@ -137,7 +137,9 @@ const handlers = {
                 const sanitized = {};
                 for (const [k, v] of Object.entries(profiles)) {
                     if (v && typeof v === 'object') {
-                        sanitized[k] = { provider: v.provider, mode: v.mode || v.type || 'api_key' };
+                        let mode = v.mode || v.type || 'token';
+                        if (mode === 'api_key') mode = 'token'; // openclaw.json expects 'token', not 'api_key'
+                        sanitized[k] = { provider: v.provider, mode };
                     }
                 }
                 updates.auth.profiles = sanitized;
@@ -198,9 +200,13 @@ const handlers = {
             const config = readJson(CONFIG_PATH);
             if (!config.auth) config.auth = {};
             if (!config.auth.profiles) config.auth.profiles = {};
+
+            let ocMode = mode || 'token';
+            if (ocMode === 'api_key') ocMode = 'token';
+
             config.auth.profiles[profileKey] = {
                 provider,
-                mode: mode || 'api_key',   // openclaw.json uses 'mode' not 'type'
+                mode: ocMode,   // openclaw.json uses 'mode: token' or 'mode: oauth'
             };
             // Ensure auth.order includes this provider
             if (!config.auth.order) config.auth.order = {};

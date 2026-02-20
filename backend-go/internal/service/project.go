@@ -741,7 +741,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 			profileKey := dbConfig.Provider + ":default"
 			profiles[profileKey] = map[string]interface{}{
-				"mode":     "api_key",
+				"mode":     "token", // replaced api_key, must be token or oauth
 				"provider": dbConfig.Provider,
 				"key":      dbConfig.APIKey, // Bridge sanitizes: routes to auth-profiles.json, strips from openclaw.json
 			}
@@ -1100,7 +1100,7 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 		profileKey := currentConfig.Provider + ":default"
 		profiles[profileKey] = map[string]interface{}{
 			"provider": currentConfig.Provider,
-			"mode":     "api_key",
+			"mode":     "token",
 			"key":      currentConfig.APIKey,
 		}
 	}
