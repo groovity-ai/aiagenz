@@ -155,6 +155,14 @@ const handlers = {
             }
 
             const merged = mergeDeep(current, updates);
+
+            // SECURITY/SCHEMA FIX: Do not deep-merge auth.profiles, as it preserves old invalid keys (like 'type: api_key')
+            // Force overwrite with the strictly sanitized profiles payload.
+            if (updates.auth?.profiles) {
+                if (!merged.auth) merged.auth = {};
+                merged.auth.profiles = updates.auth.profiles;
+            }
+
             writeJson(CONFIG_PATH, merged);
 
             res.json({ ok: true, message: "Config updated" });

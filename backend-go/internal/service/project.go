@@ -837,19 +837,51 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 2. Fallback: Direct File Write + Restart (Safer/Faster than Recreate)
 	log.Printf("[WARN] Bridge update failed for %s, falling back to file write + restart: %v", id, err)
 
-	// Prepare config for openclaw.json — re-add profiles that were stripped earlier
+	// Prepare config for openclaw.json — re-add SANITIZED profiles
 	if profiles != nil {
 		if configCopy["auth"] == nil {
 			configCopy["auth"] = map[string]interface{}{}
 		}
 		auth := configCopy["auth"].(map[string]interface{})
-		auth["profiles"] = profiles
+
+		sanitized := make(map[string]interface{})
+		for k, vInterface := range profiles {
+			if v, ok := vInterface.(map[string]interface{}); ok {
+				mode, _ := v["mode"].(string)
+				if mode == "" || mode == "api_key" {
+					mode = "token"
+				}
+				sanitized[k] = map[string]interface{}{
+					"provider": v["provider"],
+					"mode":     mode,
+				}
+			}
+		}
+		auth["profiles"] = sanitized
 	}
 	fullConfigJSON, _ := json.MarshalIndent(configCopy, "", "  ")
 
-	// Write file directly
+	// Write openclaw.json
 	if copyErr := s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/openclaw.json", fullConfigJSON); copyErr != nil {
-		return domain.ErrInternal("failed to write config file", copyErr)
+		return domain.ErrInternal("failed to write openclaw.json", copyErr)
+	}
+
+	// Write auth-profiles.json (Keys are safely stored here)
+	if profiles != nil {
+		// Enforce version 1 and 'type' for auth-profiles
+		for _, vInterface := range profiles {
+			if v, ok := vInterface.(map[string]interface{}); ok {
+				v["type"] = "api_key"
+				delete(v, "mode")
+			}
+		}
+		authStore := map[string]interface{}{
+			"version":  1,
+			"profiles": profiles,
+		}
+		authStoreJSON, _ := json.MarshalIndent(authStore, "", "  ")
+		_ = s.container.ExecAsRoot(ctx, *project.ContainerID, []string{"mkdir", "-p", "/home/node/.openclaw/agents/main/agent"})
+		_ = s.container.CopyToContainer(ctx, *project.ContainerID, "/home/node/.openclaw/agents/main/agent/auth-profiles.json", authStoreJSON)
 	}
 
 	// Note: We skip explicit chown here because ExecAsRoot fails on stopped containers.
