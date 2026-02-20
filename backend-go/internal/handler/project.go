@@ -405,20 +405,8 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		channels[req.Type] = channelObj
 	}
 
-	// 3. Set Defaults on ROOT Channel Level (Matches OpenClaw Working Schema)
+	// 3. Set Defaults on ROOT Channel Level
 	channelObj["enabled"] = true
-	if channelObj["dmPolicy"] == nil {
-		channelObj["dmPolicy"] = "pairing" // As per user's working config
-	}
-	if channelObj["groupPolicy"] == nil {
-		channelObj["groupPolicy"] = "allowlist"
-	}
-	if channelObj["streamMode"] == nil {
-		channelObj["streamMode"] = "partial"
-	}
-	if channelObj["allowFrom"] == nil {
-		channelObj["allowFrom"] = []string{"*"}
-	}
 
 	if channelObj["accounts"] == nil {
 		channelObj["accounts"] = map[string]interface{}{}
@@ -432,51 +420,26 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	// Set Defaults on ACCOUNT Level
 	defaultAcc["enabled"] = true
 
-	// 4. Merge config directly into default account
+	// 4. Map channel-specific configs using dedicated mappers
 	if len(req.Config) > 0 {
-		for k, v := range req.Config {
-			switch val := v.(type) {
-			case string:
-				if val != "" {
-					// Specific channel behavior mapping
-					if k == "phoneNumber" {
-						if req.Type == "whatsapp" || req.Type == "signal" {
-							// Use the phone number as an exclusive allowlist
-							// to prevent strangers from talking to the bot.
-							channelObj["allowFrom"] = []string{val}
-							defaultAcc["allowFrom"] = []string{val}
-						}
-						if req.Type == "signal" {
-							defaultAcc["account"] = val
-						}
-						defaultAcc[k] = val
-					} else if (k == "token" || k == "botToken") && req.Type == "telegram" {
-						defaultAcc["botToken"] = val
-					} else {
-						defaultAcc[k] = val
-					}
-				}
-			case bool:
-				defaultAcc[k] = val
-			case float64:
-				defaultAcc[k] = val
-			}
+		switch req.Type {
+		case "telegram":
+			mapTelegramConfig(channelObj, defaultAcc, req.Config)
+		case "discord":
+			mapDiscordConfig(channelObj, defaultAcc, req.Config)
+		case "slack":
+			mapSlackConfig(channelObj, defaultAcc, req.Config)
+		case "whatsapp":
+			mapWhatsAppConfig(channelObj, defaultAcc, req.Config)
+		case "signal":
+			mapSignalConfig(channelObj, defaultAcc, req.Config)
+		default:
+			mapGenericConfig(channelObj, defaultAcc, req.Config)
 		}
 	}
 
-	// Apply critical policies to account level if not present or overridden
-	if defaultAcc["dmPolicy"] == nil {
-		defaultAcc["dmPolicy"] = "open" // As per user's working config
-	}
-	if defaultAcc["allowFrom"] == nil {
-		defaultAcc["allowFrom"] = []string{"*"}
-	}
-	if defaultAcc["streamMode"] == nil {
-		defaultAcc["streamMode"] = "partial"
-	}
-	if defaultAcc["groupPolicy"] == nil {
-		defaultAcc["groupPolicy"] = "allowlist"
-	}
+	// Policies and structure are now completely managed by the individual channel mappers
+	// to ensure exact schema compliance and prevent overlap.
 
 	// 5. Save Config
 	if err := h.svc.UpdateRuntimeConfig(r.Context(), id, userID, config); err != nil {
@@ -942,4 +905,159 @@ func (h *ProjectHandler) GetSecurity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, result)
+}
+
+// ----------------------------------------------------------------------------
+// Channel Config Mappers
+// ----------------------------------------------------------------------------
+
+func mapTelegramConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	// Original Telegram Root Fallbacks
+	if channelObj["dmPolicy"] == nil {
+		channelObj["dmPolicy"] = "pairing"
+	}
+	if channelObj["groupPolicy"] == nil {
+		channelObj["groupPolicy"] = "allowlist"
+	}
+	if channelObj["streamMode"] == nil {
+		channelObj["streamMode"] = "partial"
+	}
+	if channelObj["allowFrom"] == nil {
+		channelObj["allowFrom"] = []string{"*"}
+	}
+
+	// Original Telegram Account Fallbacks
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open"
+	}
+	if defaultAcc["groupPolicy"] == nil {
+		defaultAcc["groupPolicy"] = "allowlist"
+	}
+	if defaultAcc["streamMode"] == nil {
+		defaultAcc["streamMode"] = "partial"
+	}
+	if defaultAcc["allowFrom"] == nil {
+		defaultAcc["allowFrom"] = []string{"*"}
+	}
+
+	for k, v := range reqConfig {
+		if valStr, ok := v.(string); ok && valStr != "" {
+			if k == "token" || k == "botToken" {
+				defaultAcc["botToken"] = valStr
+				continue
+			}
+		}
+		defaultAcc[k] = v
+	}
+}
+
+func mapDiscordConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if channelObj["dmPolicy"] == nil {
+		channelObj["dmPolicy"] = "pairing"
+	}
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open"
+	}
+	if defaultAcc["allowFrom"] == nil {
+		defaultAcc["allowFrom"] = []string{"*"}
+	}
+	if defaultAcc["replyToMode"] == nil {
+		defaultAcc["replyToMode"] = "off"
+	}
+
+	for k, v := range reqConfig {
+		if valStr, ok := v.(string); ok && valStr != "" {
+			if k == "token" {
+				defaultAcc["token"] = valStr
+				continue
+			}
+		}
+		defaultAcc[k] = v
+	}
+}
+
+func mapSlackConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open"
+	}
+	if defaultAcc["allowFrom"] == nil {
+		defaultAcc["allowFrom"] = []string{"*"}
+	}
+
+	for k, v := range reqConfig {
+		if valStr, ok := v.(string); ok && valStr != "" {
+			if k == "botToken" || k == "appToken" {
+				defaultAcc[k] = valStr
+				continue
+			}
+		}
+		defaultAcc[k] = v
+	}
+}
+
+func mapWhatsAppConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if channelObj["dmPolicy"] == nil {
+		channelObj["dmPolicy"] = "pairing"
+	}
+	if channelObj["groupPolicy"] == nil {
+		channelObj["groupPolicy"] = "allowlist"
+	}
+	if channelObj["allowFrom"] == nil {
+		channelObj["allowFrom"] = []string{"*"}
+	}
+
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open"
+	}
+	if defaultAcc["groupPolicy"] == nil {
+		defaultAcc["groupPolicy"] = "allowlist"
+	}
+
+	for k, v := range reqConfig {
+		if valStr, ok := v.(string); ok && valStr != "" {
+			if k == "phoneNumber" {
+				defaultAcc["phoneNumber"] = valStr
+				defaultAcc["allowFrom"] = []string{valStr} // Web Pairing Lock
+				continue
+			}
+		}
+		defaultAcc[k] = v
+	}
+}
+
+func mapSignalConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	if channelObj["dmPolicy"] == nil {
+		channelObj["dmPolicy"] = "pairing"
+	}
+	if channelObj["groupPolicy"] == nil {
+		channelObj["groupPolicy"] = "allowlist"
+	}
+	if channelObj["allowFrom"] == nil {
+		channelObj["allowFrom"] = []string{"*"}
+	}
+
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open"
+	}
+	if defaultAcc["groupPolicy"] == nil {
+		defaultAcc["groupPolicy"] = "allowlist"
+	}
+
+	for k, v := range reqConfig {
+		if valStr, ok := v.(string); ok && valStr != "" {
+			if k == "phoneNumber" {
+				defaultAcc["phoneNumber"] = valStr
+				defaultAcc["account"] = valStr
+				defaultAcc["allowFrom"] = []string{valStr} // Signal Phone Lock
+				continue
+			}
+		}
+		defaultAcc[k] = v
+	}
+}
+
+func mapGenericConfig(channelObj, defaultAcc, reqConfig map[string]interface{}) {
+	for k, v := range reqConfig {
+		defaultAcc[k] = v
+	}
 }
