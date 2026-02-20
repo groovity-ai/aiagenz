@@ -425,6 +425,16 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 						}
 						defaultAcc := accounts["default"].(map[string]interface{})
 						defaultAcc["botToken"] = val
+						defaultAcc["enabled"] = true
+						if defaultAcc["dmPolicy"] == nil {
+							defaultAcc["dmPolicy"] = "open"
+						}
+						if defaultAcc["allowFrom"] == nil {
+							defaultAcc["allowFrom"] = []string{"*"}
+						}
+						if defaultAcc["streamMode"] == nil {
+							defaultAcc["streamMode"] = "partial"
+						}
 					} else {
 						channelObj[k] = val
 					}

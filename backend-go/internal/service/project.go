@@ -253,7 +253,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					channels["telegram"] = telegram
 				}
 
-				// OpenClaw schema requires botToken to be under accounts.default
+				// OpenClaw schema requires botToken and policies under accounts.default
 				telegram["enabled"] = true
 				if telegram["accounts"] == nil {
 					telegram["accounts"] = make(map[string]interface{})
@@ -264,6 +264,16 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				}
 				defaultAcc := accounts["default"].(map[string]interface{})
 				defaultAcc["botToken"] = currentConfig.TelegramToken
+				defaultAcc["enabled"] = true
+				if defaultAcc["dmPolicy"] == nil {
+					defaultAcc["dmPolicy"] = "open"
+				}
+				if defaultAcc["allowFrom"] == nil {
+					defaultAcc["allowFrom"] = []string{"*"}
+				}
+				if defaultAcc["streamMode"] == nil {
+					defaultAcc["streamMode"] = "partial"
+				}
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
