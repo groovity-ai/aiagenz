@@ -175,14 +175,16 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                         <Console projectId={id} />
                     </TabsContent>
 
-                    <TabsContent value="webterm" className="flex-1 h-[600px] border rounded-lg overflow-hidden bg-black">
+                    <TabsContent value="webterm" className="flex-1 h-[600px]">
                         {project.ttydPort ? (
-                            <iframe
-                                src={`/ws/projects/${id}/webterm?token=${encodeURIComponent(typeof window !== 'undefined' ? (document.cookie.match(/(?:^|;\s*)token=([^;]*)/) || [])[1] || '' : '')}`}
-                                className="w-full h-full border-none"
-                                title="Web Terminal"
-                                allow="clipboard-read; clipboard-write"
-                            />
+                            <div className="h-full w-full bg-zinc-950 rounded-lg border border-slate-800 p-2 overflow-hidden">
+                                <iframe
+                                    src={`/ws/projects/${id}/webterm?token=${encodeURIComponent(typeof window !== 'undefined' ? (document.cookie.match(/(?:^|;\s*)token=([^;]*)/) || [])[1] || '' : '')}`}
+                                    className="w-full h-full border-none rounded"
+                                    title="Web Terminal"
+                                    allow="clipboard-read; clipboard-write"
+                                />
+                            </div>
                         ) : (
                             <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
                                 <Terminal className="h-8 w-8 opacity-50" />

@@ -146,7 +146,7 @@ export CI=true
 # --- 4. Launch ---
 echo "🚀 Starting Web Terminal (ttyd)..."
 ttyd --version || echo "⚠️  ttyd binary missing or failed"
-nohup su node -c "ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
+nohup su node -c "cd /home/node/workspace && ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
 sleep 1
 cat /tmp/ttyd.log
 
