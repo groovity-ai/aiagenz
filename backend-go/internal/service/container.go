@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -23,7 +24,9 @@ import (
 
 // ContainerService wraps the Docker SDK for container operations.
 type ContainerService struct {
-	cli *client.Client
+	cli       *client.Client
+	mu        sync.Mutex
+	lastStats map[string]cpuStat
 }
 
 // ContainerInfo holds the runtime status of a container.
@@ -48,7 +51,10 @@ func NewContainerService() (*ContainerService, error) {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
 
-	svc := &ContainerService{cli: cli}
+	svc := &ContainerService{
+		cli:       cli,
+		lastStats: make(map[string]cpuStat),
+	}
 
 	// Ensure shared network exists
 	if err := svc.ensureNetwork(context.Background()); err != nil {
@@ -580,31 +586,43 @@ func (s *ContainerService) Stats(ctx context.Context, containerID string) (map[s
 		"read":         statsJSON["read"],
 	}
 
-	// Calculate CPU percentage
+	// Calculate CPU percentage using internal cache for delta
 	if cpuStats, ok := statsJSON["cpu_stats"].(map[string]interface{}); ok {
-		if preCPU, ok := statsJSON["precpu_stats"].(map[string]interface{}); ok {
-			cpuUsage := getNestedFloat(cpuStats, "cpu_usage", "total_usage")
-			preCPUUsage := getNestedFloat(preCPU, "cpu_usage", "total_usage")
-			systemUsage := getNestedFloat(cpuStats, "system_cpu_usage")
-			preSystemUsage := getNestedFloat(preCPU, "system_cpu_usage")
+		cpuUsage := getNestedFloat(cpuStats, "cpu_usage", "total_usage")
+		systemUsage := getNestedFloat(cpuStats, "system_cpu_usage")
 
-			cpuDelta := cpuUsage - preCPUUsage
-			systemDelta := systemUsage - preSystemUsage
-			if systemDelta > 0 {
-				result["cpu_percent"] = (cpuDelta / systemDelta) * 100.0
+		s.mu.Lock()
+		lastStat, exists := s.lastStats[containerID]
+		s.lastStats[containerID] = cpuStat{
+			TotalUsage:  cpuUsage,
+			SystemUsage: systemUsage,
+			Timestamp:   time.Now(),
+		}
+		s.mu.Unlock()
+
+		if exists && systemUsage > lastStat.SystemUsage {
+			cpuDelta := cpuUsage - lastStat.TotalUsage
+			systemDelta := systemUsage - lastStat.SystemUsage
+			if systemDelta > 0 && cpuDelta > 0 {
+				onlineCPUs := 1.0
+				if v := getNestedFloat(cpuStats, "online_cpus"); v > 0 {
+					onlineCPUs = v
+				} else if percpu, ok := getNestedFloatList(cpuStats, "cpu_usage", "percpu_usage"); ok {
+					onlineCPUs = float64(len(percpu))
+				}
+				result["cpu_percent"] = (cpuDelta / systemDelta) * onlineCPUs * 100.0
 			}
 		}
 	}
 
-	// Calculate memory percentage
-	if memStats, ok := statsJSON["memory_stats"].(map[string]interface{}); ok {
-		usage, _ := memStats["usage"].(float64)
-		limit, _ := memStats["limit"].(float64)
-		if limit > 0 {
-			result["memory_usage_mb"] = usage / 1024 / 1024
-			result["memory_limit_mb"] = limit / 1024 / 1024
-			result["memory_percent"] = (usage / limit) * 100.0
-		}
+	// Calculate memory percentage safely
+	usage := getNestedFloat(statsJSON, "memory_stats", "usage")
+	limit := getNestedFloat(statsJSON, "memory_stats", "limit")
+	// For cgroup v2, docker API might put usage differently if total memory is used, but usage is usually correct.
+	if limit > 0 && usage > 0 {
+		result["memory_usage_mb"] = usage / 1024 / 1024
+		result["memory_limit_mb"] = limit / 1024 / 1024
+		result["memory_percent"] = (usage / limit) * 100.0
 	}
 
 	return result, nil
