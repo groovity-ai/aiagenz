@@ -283,8 +283,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				profiles[profileKey] = map[string]interface{}{
 					"provider": currentConfig.Provider,
 					"mode":     "api_key",
-					"key":      currentConfig.APIKey,
-					"apiKey":   currentConfig.APIKey,
+					"key":      currentConfig.APIKey, // Bridge sanitizes: writes key to auth-profiles.json, strips from openclaw.json
 				}
 
 				// Update Auth Order
@@ -744,8 +743,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			profiles[profileKey] = map[string]interface{}{
 				"mode":     "api_key",
 				"provider": dbConfig.Provider,
-				"key":      dbConfig.APIKey,
-				"apiKey":   dbConfig.APIKey,
+				"key":      dbConfig.APIKey, // Bridge sanitizes: routes to auth-profiles.json, strips from openclaw.json
 			}
 
 			// Ensure Auth Order exists and includes this profile

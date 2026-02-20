@@ -118,10 +118,11 @@ if [ ! -f "$AUTH_PROFILES_FILE" ]; then
     mkdir -p "$AUTH_PROFILES_DIR"
     cat > "$AUTH_PROFILES_FILE" <<EOF
 {
+  "version": 1,
   "profiles": {
-    "google:default": { "provider": "google", "mode": "api_key" },
-    "openai:default": { "provider": "openai", "mode": "api_key" },
-    "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
+    "google:default": { "type": "api_key", "provider": "google" },
+    "openai:default": { "type": "api_key", "provider": "openai" },
+    "anthropic:default": { "type": "api_key", "provider": "anthropic" }
   }
 }
 EOF
