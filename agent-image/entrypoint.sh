@@ -139,17 +139,7 @@ export HOME="/home/node"
 export OPENCLAW_STATE_DIR="$STATE_DIR"
 export CI=true
 
-# --- 3.5. Auto-Heal Corrupted Models ---
-# OpenClaw will hard-crash if "primary": "google" (lacking a / provider format).
-# If the volume already has this bad format saved, it will crash loop forever.
-# We aggressively sanitize it here before boot.
-if [ -f "$CONFIG_FILE" ]; then
-    echo "🩹 Checking for malformed primary models in config..."
-    # If the value is strictly "google", "openai", or "anthropic" (no /)
-    sed -i 's/"primary": "google"/"primary": "google\/gemini-3-flash-preview"/g' "$CONFIG_FILE"
-    sed -i 's/"primary": "openai"/"primary": "openai\/gpt-4o-mini"/g' "$CONFIG_FILE"
-    sed -i 's/"primary": "anthropic"/"primary": "anthropic\/claude-3-5-haiku-20241022"/g' "$CONFIG_FILE"
-fi
+
 
 # --- 4. Launch ---
 echo "⚙️  Optimizing OpenClaw CLI for low-memory environments..."
