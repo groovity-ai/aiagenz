@@ -408,15 +408,23 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 	// 3. Set Enabled = true
 	channelObj["enabled"] = true
 
-	// 4. Merge config directly into channel (FLAT format — no accounts.default nesting)
+	// 4. Merge config directly into channel
 	if len(req.Config) > 0 {
 		for k, v := range req.Config {
 			switch val := v.(type) {
 			case string:
 				if val != "" {
-					// Normalize: "token" → "botToken" for Telegram
-					if k == "token" && req.Type == "telegram" {
-						channelObj["botToken"] = val
+					// OpenClaw schema requires botToken to be under accounts.default
+					if (k == "token" || k == "botToken") && req.Type == "telegram" {
+						if channelObj["accounts"] == nil {
+							channelObj["accounts"] = map[string]interface{}{}
+						}
+						accounts := channelObj["accounts"].(map[string]interface{})
+						if accounts["default"] == nil {
+							accounts["default"] = map[string]interface{}{}
+						}
+						defaultAcc := accounts["default"].(map[string]interface{})
+						defaultAcc["botToken"] = val
 					} else {
 						channelObj[k] = val
 					}

@@ -253,9 +253,17 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					channels["telegram"] = telegram
 				}
 
-				// Flat format — botToken directly on channel (no accounts.default nesting)
+				// OpenClaw schema requires botToken to be under accounts.default
 				telegram["enabled"] = true
-				telegram["botToken"] = currentConfig.TelegramToken
+				if telegram["accounts"] == nil {
+					telegram["accounts"] = make(map[string]interface{})
+				}
+				accounts := telegram["accounts"].(map[string]interface{})
+				if accounts["default"] == nil {
+					accounts["default"] = make(map[string]interface{})
+				}
+				defaultAcc := accounts["default"].(map[string]interface{})
+				defaultAcc["botToken"] = currentConfig.TelegramToken
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
