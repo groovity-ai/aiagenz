@@ -438,8 +438,14 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 			switch val := v.(type) {
 			case string:
 				if val != "" {
-					// OpenClaw schema requires botToken to be under accounts.default
-					if (k == "token" || k == "botToken") && req.Type == "telegram" {
+					// Specific channel behavior mapping
+					if k == "phoneNumber" && req.Type == "whatsapp" {
+						// For WhatsApp, use the phone number as an exclusive allowlist
+						// to prevent strangers from talking to the bot.
+						channelObj["allowFrom"] = []string{val}
+						defaultAcc["allowFrom"] = []string{val}
+						defaultAcc[k] = val
+					} else if (k == "token" || k == "botToken") && req.Type == "telegram" {
 						defaultAcc["botToken"] = val
 					} else {
 						defaultAcc[k] = val
