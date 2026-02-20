@@ -31,13 +31,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
     "lastTouchedVersion": "$OPENCLAW_VERSION",
     "lastTouchedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   },
-  "auth": {
-    "profiles": {
-      "google:default": { "provider": "google", "mode": "api_key" },
-      "openai:default": { "provider": "openai", "mode": "api_key" },
-      "anthropic:default": { "provider": "anthropic", "mode": "api_key" }
-    }
-  },
   "agents": {
     "defaults": {
       "model": {
