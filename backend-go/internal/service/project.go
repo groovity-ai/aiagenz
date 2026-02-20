@@ -248,21 +248,20 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					channels["telegram"] = make(map[string]interface{})
 				}
 				telegram, ok := channels["telegram"].(map[string]interface{})
-				if !ok {
-					telegram = make(map[string]interface{})
-					channels["telegram"] = telegram
-				}
+				// OpenClaw schema requires ALL channel config to be strictly under accounts.default
+				telegram["enabled"] = true // The root only needs the master switch enabled: true
 
-				// OpenClaw schema requires botToken and policies under accounts.default
-				telegram["enabled"] = true
 				if telegram["accounts"] == nil {
 					telegram["accounts"] = make(map[string]interface{})
 				}
 				accounts := telegram["accounts"].(map[string]interface{})
+
 				if accounts["default"] == nil {
 					accounts["default"] = make(map[string]interface{})
 				}
 				defaultAcc := accounts["default"].(map[string]interface{})
+
+				// Apply all properties strictly to the account level
 				defaultAcc["botToken"] = currentConfig.TelegramToken
 				defaultAcc["enabled"] = true
 				if defaultAcc["dmPolicy"] == nil {
@@ -274,6 +273,13 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				if defaultAcc["streamMode"] == nil {
 					defaultAcc["streamMode"] = "partial"
 				}
+
+				// Purge duplicate properties from the root if they exist to prevent schema ambiguity
+				delete(telegram, "dmPolicy")
+				delete(telegram, "allowFrom")
+				delete(telegram, "groupPolicy")
+				delete(telegram, "streamMode")
+				delete(telegram, "botToken")
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
@@ -735,16 +741,20 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			}
 		}
 
-		// 3. Inject Telegram (flat format)
+		// 3. Inject Telegram (nested format)
 		if dbConfig.TelegramToken != "" {
 			config["channels"] = map[string]interface{}{
 				"telegram": map[string]interface{}{
-					"enabled":     true,
-					"botToken":    dbConfig.TelegramToken,
-					"dmPolicy":    "open",
-					"groupPolicy": "allowlist",
-					"allowFrom":   []string{"*"},
-					"streamMode":  "partial",
+					"enabled": true,
+					"accounts": map[string]interface{}{
+						"default": map[string]interface{}{
+							"botToken":   dbConfig.TelegramToken,
+							"enabled":    true,
+							"dmPolicy":   "open",
+							"allowFrom":  []string{"*"},
+							"streamMode": "partial",
+						},
+					},
 				},
 			}
 		}
