@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/aiagenz/backend/internal/repository"
@@ -79,8 +80,16 @@ func (h *WebtermHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy to ttyd on 127.0.0.1 (bound on host, see container.go PortBindings)
-	target, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%s", info.TtydPort))
+	// Proxy to ttyd. If Go is inside Docker (production), use the container's internal IP.
+	// If Go is running locally on Mac (dev), use the host-mapped port on 127.0.0.1.
+	var targetUrl string
+	if _, err := os.Stat("/.dockerenv"); err == nil && info.IP != "" {
+		targetUrl = fmt.Sprintf("http://%s:7681", info.IP) // Container-to-container
+	} else {
+		targetUrl = fmt.Sprintf("http://127.0.0.1:%s", info.TtydPort) // Host-to-container
+	}
+
+	target, err := url.Parse(targetUrl)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
