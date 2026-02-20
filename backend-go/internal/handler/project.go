@@ -405,10 +405,34 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 		channels[req.Type] = channelObj
 	}
 
-	// 3. Set Enabled = true
+	// 3. Set Defaults on ROOT Channel Level (Matches OpenClaw Working Schema)
 	channelObj["enabled"] = true
+	if channelObj["dmPolicy"] == nil {
+		channelObj["dmPolicy"] = "pairing" // As per user's working config
+	}
+	if channelObj["groupPolicy"] == nil {
+		channelObj["groupPolicy"] = "allowlist"
+	}
+	if channelObj["streamMode"] == nil {
+		channelObj["streamMode"] = "partial"
+	}
+	if channelObj["allowFrom"] == nil {
+		channelObj["allowFrom"] = []string{"*"}
+	}
 
-	// 4. Merge config directly into channel
+	if channelObj["accounts"] == nil {
+		channelObj["accounts"] = map[string]interface{}{}
+	}
+	accounts := channelObj["accounts"].(map[string]interface{})
+	if accounts["default"] == nil {
+		accounts["default"] = map[string]interface{}{}
+	}
+	defaultAcc := accounts["default"].(map[string]interface{})
+
+	// Set Defaults on ACCOUNT Level
+	defaultAcc["enabled"] = true
+
+	// 4. Merge config directly into default account
 	if len(req.Config) > 0 {
 		for k, v := range req.Config {
 			switch val := v.(type) {
@@ -416,35 +440,31 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 				if val != "" {
 					// OpenClaw schema requires botToken to be under accounts.default
 					if (k == "token" || k == "botToken") && req.Type == "telegram" {
-						if channelObj["accounts"] == nil {
-							channelObj["accounts"] = map[string]interface{}{}
-						}
-						accounts := channelObj["accounts"].(map[string]interface{})
-						if accounts["default"] == nil {
-							accounts["default"] = map[string]interface{}{}
-						}
-						defaultAcc := accounts["default"].(map[string]interface{})
 						defaultAcc["botToken"] = val
-						defaultAcc["enabled"] = true
-						if defaultAcc["dmPolicy"] == nil {
-							defaultAcc["dmPolicy"] = "open"
-						}
-						if defaultAcc["allowFrom"] == nil {
-							defaultAcc["allowFrom"] = []string{"*"}
-						}
-						if defaultAcc["streamMode"] == nil {
-							defaultAcc["streamMode"] = "partial"
-						}
 					} else {
-						channelObj[k] = val
+						defaultAcc[k] = val
 					}
 				}
 			case bool:
-				channelObj[k] = val
+				defaultAcc[k] = val
 			case float64:
-				channelObj[k] = val
+				defaultAcc[k] = val
 			}
 		}
+	}
+
+	// Apply critical policies to account level if not present or overridden
+	if defaultAcc["dmPolicy"] == nil {
+		defaultAcc["dmPolicy"] = "open" // As per user's working config
+	}
+	if defaultAcc["allowFrom"] == nil {
+		defaultAcc["allowFrom"] = []string{"*"}
+	}
+	if defaultAcc["streamMode"] == nil {
+		defaultAcc["streamMode"] = "partial"
+	}
+	if defaultAcc["groupPolicy"] == nil {
+		defaultAcc["groupPolicy"] = "allowlist"
 	}
 
 	// 5. Save Config

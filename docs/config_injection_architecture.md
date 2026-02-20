@@ -64,15 +64,24 @@ If you place `botToken` at the root of the channel, `openclaw doctor` will ignor
 }
 ```
 
-### ✅ CORRECT (Nested Format)
-All credentials for a channel MUST be nested under the `accounts.default` path.
+### ✅ CORRECT (Nested & Duplicated Format)
+All credentials for a channel MUST be nested under the `accounts.default` path. Additionally, some channel properties (like `dmPolicy`, `allowFrom`) need to be duplicated at the root of the channel to act as global templates, while also existing inside `accounts.default` as account-specific overrides.
 ```json
 "channels": {
   "telegram": {
     "enabled": true,
+    "dmPolicy": "pairing",
+    "groupPolicy": "allowlist",
+    "streamMode": "partial",
+    "allowFrom": ["*"],
     "accounts": {
       "default": {
-        "botToken": "8330386957:AAEm..."
+        "enabled": true,
+        "botToken": "8330386957:AAEm...",
+        "dmPolicy": "open",
+        "groupPolicy": "allowlist",
+        "streamMode": "partial",
+        "allowFrom": ["*"]
       }
     }
   }

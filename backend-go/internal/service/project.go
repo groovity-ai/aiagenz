@@ -248,8 +248,20 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 					channels["telegram"] = make(map[string]interface{})
 				}
 				telegram, ok := channels["telegram"].(map[string]interface{})
-				// OpenClaw schema requires ALL channel config to be strictly under accounts.default
-				telegram["enabled"] = true // The root only needs the master switch enabled: true
+				// Set Defaults on ROOT Channel Level (Matches OpenClaw Working Schema)
+				telegram["enabled"] = true
+				if telegram["dmPolicy"] == nil {
+					telegram["dmPolicy"] = "pairing" // As per user's working config
+				}
+				if telegram["groupPolicy"] == nil {
+					telegram["groupPolicy"] = "allowlist"
+				}
+				if telegram["streamMode"] == nil {
+					telegram["streamMode"] = "partial"
+				}
+				if telegram["allowFrom"] == nil {
+					telegram["allowFrom"] = []string{"*"}
+				}
 
 				if telegram["accounts"] == nil {
 					telegram["accounts"] = make(map[string]interface{})
@@ -265,7 +277,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				defaultAcc["botToken"] = currentConfig.TelegramToken
 				defaultAcc["enabled"] = true
 				if defaultAcc["dmPolicy"] == nil {
-					defaultAcc["dmPolicy"] = "open"
+					defaultAcc["dmPolicy"] = "open" // As per user's working config
 				}
 				if defaultAcc["allowFrom"] == nil {
 					defaultAcc["allowFrom"] = []string{"*"}
@@ -273,13 +285,9 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				if defaultAcc["streamMode"] == nil {
 					defaultAcc["streamMode"] = "partial"
 				}
-
-				// Purge duplicate properties from the root if they exist to prevent schema ambiguity
-				delete(telegram, "dmPolicy")
-				delete(telegram, "allowFrom")
-				delete(telegram, "groupPolicy")
-				delete(telegram, "streamMode")
-				delete(telegram, "botToken")
+				if defaultAcc["groupPolicy"] == nil {
+					defaultAcc["groupPolicy"] = "allowlist"
+				}
 			}
 
 			// 2. API Key / Provider (Update Auth Profiles)
