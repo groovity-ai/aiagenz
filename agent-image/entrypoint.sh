@@ -112,11 +112,7 @@ if [ ! -f "$AUTH_PROFILES_FILE" ]; then
     cat > "$AUTH_PROFILES_FILE" <<EOF
 {
   "version": 1,
-  "profiles": {
-    "google:default": { "type": "api_key", "provider": "google" },
-    "openai:default": { "type": "api_key", "provider": "openai" },
-    "anthropic:default": { "type": "api_key", "provider": "anthropic" }
-  }
+  "profiles": {}
 }
 EOF
 fi

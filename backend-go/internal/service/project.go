@@ -680,11 +680,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 				"lastTouchedAt":      time.Now().Format(time.RFC3339),
 			},
 			"auth": map[string]interface{}{
-				"profiles": map[string]interface{}{
-					"google:default":    map[string]interface{}{"provider": "google", "mode": "api_key"},
-					"openai:default":    map[string]interface{}{"provider": "openai", "mode": "api_key"},
-					"anthropic:default": map[string]interface{}{"provider": "anthropic", "mode": "api_key"},
-				},
+				"profiles": map[string]interface{}{},
 			},
 			"agents": map[string]interface{}{
 				"defaults": map[string]interface{}{
@@ -831,7 +827,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 			profileKey := dbConfig.Provider + ":default"
 			profiles[profileKey] = map[string]interface{}{
-				"mode":     "token", // replaced api_key, must be token or oauth
+				"mode":     "api_key",
 				"provider": dbConfig.Provider,
 				"key":      dbConfig.APIKey, // Bridge sanitizes: routes to auth-profiles.json, strips from openclaw.json
 			}
@@ -938,8 +934,8 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		for k, vInterface := range profiles {
 			if v, ok := vInterface.(map[string]interface{}); ok {
 				mode, _ := v["mode"].(string)
-				if mode == "" || mode == "api_key" {
-					mode = "token"
+				if mode == "" {
+					mode = "api_key"
 				}
 				sanitized[k] = map[string]interface{}{
 					"provider": v["provider"],
@@ -961,7 +957,13 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		// Enforce version 1 and 'type' for auth-profiles
 		for _, vInterface := range profiles {
 			if v, ok := vInterface.(map[string]interface{}); ok {
-				v["type"] = "api_key"
+				if t, ok := v["type"].(string); ok && t != "" {
+					// already has type
+				} else if m, ok := v["mode"].(string); ok && m != "" {
+					v["type"] = m
+				} else {
+					v["type"] = "api_key"
+				}
 				delete(v, "mode")
 			}
 		}
