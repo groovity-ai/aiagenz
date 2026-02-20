@@ -64,7 +64,7 @@ export default function CreateAgentModal({ open, onClose, onCreated }: CreateAge
     const [telegramToken, setTelegramToken] = useState("")
     const [apiKey, setApiKey] = useState("")
     const [provider, setProvider] = useState("google")
-    const [model, setModel] = useState("google/google/gemini-3-flash-preview")
+    const [model, setModel] = useState("google/gemini-3-flash-preview")
     const [availableModels, setAvailableModels] = useState<string[]>(PROVIDERS.google)
 
     // Deploy state
