@@ -74,11 +74,14 @@ const SUPPORTED_CHANNELS: { id: string; name: string; icon: string; fields: { ke
     },
     {
         id: 'slack', name: 'Slack', icon: '💼',
-        fields: [{ key: 'token', label: 'Bot Token', type: 'password', placeholder: 'xoxb-...' }]
+        fields: [
+            { key: 'botToken', label: 'Bot Token', type: 'password', placeholder: 'xoxb-...' },
+            { key: 'appToken', label: 'App Token (Socket Mode)', type: 'password', placeholder: 'xapp-...' }
+        ]
     },
     {
         id: 'signal', name: 'Signal', icon: '🔒',
-        fields: [{ key: 'phoneNumber', label: 'Phone Number', type: 'text', placeholder: '+1234567890' }]
+        fields: [{ key: 'phoneNumber', label: 'Bot Phone Number', type: 'text', placeholder: '+1234567890' }]
     },
     {
         id: 'googlechat', name: 'Google Chat', icon: '💚',

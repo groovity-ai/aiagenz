@@ -439,11 +439,16 @@ func (h *ProjectHandler) AddChannel(w http.ResponseWriter, r *http.Request) {
 			case string:
 				if val != "" {
 					// Specific channel behavior mapping
-					if k == "phoneNumber" && req.Type == "whatsapp" {
-						// For WhatsApp, use the phone number as an exclusive allowlist
-						// to prevent strangers from talking to the bot.
-						channelObj["allowFrom"] = []string{val}
-						defaultAcc["allowFrom"] = []string{val}
+					if k == "phoneNumber" {
+						if req.Type == "whatsapp" || req.Type == "signal" {
+							// Use the phone number as an exclusive allowlist
+							// to prevent strangers from talking to the bot.
+							channelObj["allowFrom"] = []string{val}
+							defaultAcc["allowFrom"] = []string{val}
+						}
+						if req.Type == "signal" {
+							defaultAcc["account"] = val
+						}
 						defaultAcc[k] = val
 					} else if (k == "token" || k == "botToken") && req.Type == "telegram" {
 						defaultAcc["botToken"] = val
