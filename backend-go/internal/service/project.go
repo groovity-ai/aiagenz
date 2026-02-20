@@ -770,23 +770,30 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			config["channels"] = deepMergeMap(config["channels"].(map[string]interface{}), dbConfig.Channels)
 		}
 
-		chMap := config["channels"].(map[string]interface{})
-
-		// Backward compatibility: inject legacy token ONLY IF telegram block is entirely missing
+		// Backward compatibility: if the DB has a TelegramToken but no explicit Channels mapping for telegram,
+		// we must ensure the `open` policy and token are merged in, overriding OpenClaw's default `pairing` policy.
 		if dbConfig.TelegramToken != "" {
-			if _, hasTg := chMap["telegram"]; !hasTg {
-				chMap["telegram"] = map[string]interface{}{
-					"enabled": true,
-					"accounts": map[string]interface{}{
-						"default": map[string]interface{}{
-							"botToken":   dbConfig.TelegramToken,
-							"enabled":    true,
-							"dmPolicy":   "open",
-							"allowFrom":  []string{"*"},
-							"streamMode": "partial",
+			hasExplicitTgConfig := false
+			if dbConfig.Channels != nil {
+				_, hasExplicitTgConfig = dbConfig.Channels["telegram"]
+			}
+
+			if !hasExplicitTgConfig {
+				legacyTg := map[string]interface{}{
+					"telegram": map[string]interface{}{
+						"enabled": true,
+						"accounts": map[string]interface{}{
+							"default": map[string]interface{}{
+								"botToken":   dbConfig.TelegramToken,
+								"enabled":    true,
+								"dmPolicy":   "open",
+								"allowFrom":  []string{"*"},
+								"streamMode": "partial",
+							},
 						},
 					},
 				}
+				config["channels"] = deepMergeMap(config["channels"].(map[string]interface{}), legacyTg)
 			}
 		}
 
