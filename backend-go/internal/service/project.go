@@ -839,7 +839,14 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 2. Fallback: Direct File Write + Restart (Safer/Faster than Recreate)
 	log.Printf("[WARN] Bridge update failed for %s, falling back to file write + restart: %v", id, err)
 
-	// Prepare config for openclaw.json
+	// Prepare config for openclaw.json — re-add profiles that were stripped earlier
+	if profiles != nil {
+		if configCopy["auth"] == nil {
+			configCopy["auth"] = map[string]interface{}{}
+		}
+		auth := configCopy["auth"].(map[string]interface{})
+		auth["profiles"] = profiles
+	}
 	fullConfigJSON, _ := json.MarshalIndent(configCopy, "", "  ")
 
 	// Write file directly

@@ -281,15 +281,17 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
     const [addingChannel, setAddingChannel] = useState<string | null>(null)
     const [channelFields, setChannelFields] = useState<Record<string, Record<string, string>>>({})
 
-    // Initialize field values from config
+    // Initialize field values from config (supports both flat and nested format)
     useEffect(() => {
         const initial: Record<string, Record<string, string>> = {}
         SUPPORTED_CHANNELS.forEach(ch => {
             const chConfig = channels[ch.id]
+            // Support both flat format (botToken on channel) and nested (accounts.default.botToken)
             const account = chConfig?.accounts?.['default'] || {} as ChannelAccount
             const fields: Record<string, string> = {}
             ch.fields.forEach(f => {
-                fields[f.key] = (account as any)[f.key] || ''
+                // Try nested first, then flat
+                fields[f.key] = (account as any)[f.key] || (chConfig as any)?.[f.key] || ''
             })
             initial[ch.id] = fields
         })
@@ -299,9 +301,15 @@ function ChannelsEditor({ config, projectId, onUpdate }: {
     const getChannelStatus = (channelId: string): 'active' | 'configured' | 'unconfigured' => {
         const ch = channels[channelId]
         if (!ch) return 'unconfigured'
-        const account = ch.accounts?.['default']
-        if (!account) return 'unconfigured'
-        const hasCredentials = Object.values(account).some(v => typeof v === 'string' && v.length > 0)
+        // Support both flat format (botToken on channel) and nested (accounts.default)
+        const account = ch.accounts?.['default'] || {}
+        // Check credentials in both nested account AND flat channel object
+        const hasNestedCredentials = Object.values(account).some(v => typeof v === 'string' && v.length > 0)
+        const channelDef = SUPPORTED_CHANNELS.find(sc => sc.id === channelId)
+        const hasFlatCredentials = channelDef?.fields?.some(
+            f => typeof (ch as any)[f.key] === 'string' && (ch as any)[f.key].length > 0
+        ) ?? false
+        const hasCredentials = hasNestedCredentials || hasFlatCredentials
         if (ch.enabled !== false && hasCredentials) return 'active'
         if (hasCredentials) return 'configured'
         return 'unconfigured'
