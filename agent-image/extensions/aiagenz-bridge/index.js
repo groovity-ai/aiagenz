@@ -264,16 +264,43 @@ const handlers = {
             const { provider } = JSON.parse(body);
             if (!provider) return res.status(400).json({ ok: false, error: 'provider required' });
 
-            execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
-                { env: process.env, timeout: 15000 },
-                (error, stdout, stderr) => {
-                    if (error) {
-                        res.status(500).json({ ok: false, error: error.message, stdout, stderr });
-                    } else {
-                        res.json({ ok: true, data: stdout.trim() });
+            // OAuth providers require their auth plugin to be enabled first.
+            // Map provider name -> plugin name (only for OAuth-based providers).
+            const OAUTH_PLUGIN_MAP = {
+                'google-antigravity': 'google-antigravity-auth',
+                'google-gemini-cli': 'google-gemini-cli-auth',
+                'openai-codex': 'openai-codex-auth',
+                'qwen-portal': 'qwen-portal-auth',
+            };
+
+            const pluginName = OAUTH_PLUGIN_MAP[provider];
+            const runLogin = () => {
+                execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
+                    { env: process.env, timeout: 15000 },
+                    (error, stdout, stderr) => {
+                        if (error) {
+                            res.status(500).json({ ok: false, error: error.message, stdout, stderr });
+                        } else {
+                            res.json({ ok: true, data: stdout.trim() });
+                        }
                     }
-                }
-            );
+                );
+            };
+
+            if (pluginName) {
+                // Auto-enable the auth plugin before starting login
+                console.log(`[bridge] Auto-enabling plugin: ${pluginName}`);
+                execFile('openclaw', ['plugins', 'enable', pluginName],
+                    { env: process.env, timeout: 10000 },
+                    (err, out, serr) => {
+                        if (err) console.log(`[bridge] Plugin enable warning: ${err.message}`);
+                        else console.log(`[bridge] Plugin ${pluginName} enabled: ${out.trim()}`);
+                        runLogin();
+                    }
+                );
+            } else {
+                runLogin();
+            }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -285,7 +312,7 @@ const handlers = {
             if (!provider || !callbackUrl) return res.status(400).json({ ok: false, error: 'provider and callbackUrl required' });
 
             const child = require('child_process').spawn('openclaw',
-                ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
+                ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
                 { env: process.env, timeout: 15000 }
             );
 

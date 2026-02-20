@@ -30,6 +30,7 @@ type ProjectConfig struct {
 	Provider      string                 `json:"provider,omitempty"`
 	Model         string                 `json:"model,omitempty"`
 	Channels      map[string]interface{} `json:"channels,omitempty"`
+	AuthProfiles  map[string]interface{} `json:"authProfiles,omitempty"`
 }
 
 // SafeProjectConfig returns masked config for API responses.
@@ -39,6 +40,7 @@ type SafeProjectConfig struct {
 	Provider      string                 `json:"provider,omitempty"`
 	Model         string                 `json:"model,omitempty"`
 	Channels      map[string]interface{} `json:"channels,omitempty"`
+	AuthProfiles  map[string]interface{} `json:"authProfiles,omitempty"`
 }
 
 // ProjectResponse is the API response for a project.

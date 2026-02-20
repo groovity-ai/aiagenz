@@ -797,8 +797,32 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 			}
 		}
 
-		// 4. Inject API Key (Auth Profile)
-		if dbConfig.Provider != "" && dbConfig.APIKey != "" {
+		// 4. Inject Auth Profiles (New approach)
+		if len(dbConfig.AuthProfiles) > 0 {
+			if config["auth"] == nil {
+				config["auth"] = map[string]interface{}{}
+			}
+			authObj := config["auth"].(map[string]interface{})
+			if authObj["profiles"] == nil {
+				authObj["profiles"] = map[string]interface{}{}
+			}
+			if authObj["order"] == nil {
+				authObj["order"] = map[string]interface{}{}
+			}
+			profiles := authObj["profiles"].(map[string]interface{})
+			orderObj := authObj["order"].(map[string]interface{})
+
+			for k, v := range dbConfig.AuthProfiles {
+				profiles[k] = v
+				if prof, ok := v.(map[string]interface{}); ok {
+					if p, ok := prof["provider"].(string); ok {
+						if orderObj[p] == nil {
+							orderObj[p] = []string{k}
+						}
+					}
+				}
+			}
+		} else if dbConfig.Provider != "" && dbConfig.APIKey != "" {
 			auth, _ := config["auth"].(map[string]interface{})
 			if auth["profiles"] == nil {
 				auth["profiles"] = map[string]interface{}{}
@@ -1088,16 +1112,22 @@ func (s *ProjectService) OAuthGetURL(ctx context.Context, projectID, userID, pro
 	}
 
 	// Try Bridge first
-	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/login", map[string]interface{}{
+	respBytes, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/login", map[string]interface{}{
 		"provider": provider,
 	}, nil)
 	if err == nil {
-		return string(resp), nil
+		var parsed map[string]interface{}
+		if json.Unmarshal(respBytes, &parsed) == nil {
+			if dataStr, ok := parsed["data"].(string); ok {
+				return dataStr, nil
+			}
+		}
+		return string(respBytes), nil
 	}
 	log.Printf("[INFO] Bridge OAuth unavailable, falling back to docker exec: %v", err)
 
 	// Fallback: docker exec
-	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
+	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--set-default", "--no-browser"}
 	output, err := s.container.ExecCommandWithTimeout(ctx, *project.ContainerID, cmd, 10*time.Second)
 	if output != "" {
 		return output, nil
@@ -1118,17 +1148,23 @@ func (s *ProjectService) OAuthSubmitCallback(ctx context.Context, projectID, use
 	}
 
 	// Try Bridge first
-	resp, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/callback", map[string]interface{}{
+	respBytes, err := s.CallBridge(ctx, *project.ContainerID, "POST", "/auth/callback", map[string]interface{}{
 		"provider":    provider,
 		"callbackUrl": callbackURL,
 	}, nil)
 	if err == nil {
-		return string(resp), nil
+		var parsed map[string]interface{}
+		if json.Unmarshal(respBytes, &parsed) == nil {
+			if dataStr, ok := parsed["data"].(string); ok {
+				return dataStr, nil
+			}
+		}
+		return string(respBytes), nil
 	}
 	log.Printf("[INFO] Bridge OAuth callback unavailable, falling back to docker exec: %v", err)
 
 	// Fallback: docker exec
-	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--no-browser"}
+	cmd := []string{"openclaw", "models", "auth", "login", "--provider", provider, "--set-default", "--no-browser"}
 	output, err := s.container.ExecCommandWithStdinAndOutput(ctx, *project.ContainerID, cmd, callbackURL)
 	if err != nil {
 		return "", domain.ErrInternal("OAuth callback failed", fmt.Errorf("%s", sanitizeError(err.Error())))
@@ -1194,7 +1230,11 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 	// 6. Post-Start Setup
 	// Build auth profiles map for injection
 	profiles := make(map[string]interface{})
-	if currentConfig.Provider != "" && currentConfig.APIKey != "" {
+	if currentConfig.AuthProfiles != nil {
+		for k, v := range currentConfig.AuthProfiles {
+			profiles[k] = v
+		}
+	} else if currentConfig.Provider != "" && currentConfig.APIKey != "" {
 		profileKey := currentConfig.Provider + ":default"
 		profiles[profileKey] = map[string]interface{}{
 			"provider": currentConfig.Provider,
@@ -1331,8 +1371,10 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 	}
 
 	var provider, apiKey string
+	var authProfiles map[string]interface{}
 	if auth, ok := runtimeConfig["auth"].(map[string]interface{}); ok {
 		if profiles, ok := auth["profiles"].(map[string]interface{}); ok {
+			authProfiles = profiles
 			// Find first available profile
 			for _, v := range profiles {
 				if prof, ok := v.(map[string]interface{}); ok {
@@ -1362,6 +1404,10 @@ func (s *ProjectService) syncTokenToDB(ctx context.Context, project *domain.Proj
 	changed := false
 	if channelsBlock != nil {
 		dbConfig.Channels = channelsBlock
+		changed = true
+	}
+	if authProfiles != nil {
+		dbConfig.AuthProfiles = authProfiles
 		changed = true
 	}
 	if provider != "" && dbConfig.Provider != provider {
