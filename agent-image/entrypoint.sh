@@ -108,17 +108,18 @@ fi
 
 # --- 1.2. Config Auto-Healer (Self-Correction for schema upgrades) ---
 if [ -f "$CONFIG_FILE" ]; then
-    echo "🔍 Validating openclaw.json schema..."
-    # Run openclaw doctor silently. If it fails, we have a corrupted schema (like legacy auth profiles)
-    if ! node /app/openclaw.mjs doctor >/dev/null 2>&1; then
-        echo "⚠️ CRITICAL: Config schema is invalid! OpenClaw gateway will crash."
-        echo "🚑 Auto-healing: Stripping potentially corrupted auth profiles..."
+    echo "🔍 Running fast config auto-healer..."
+    # Legacy configurations might have saved 'auth.profiles' directly into openclaw.json,
+    # which causes strict validation failures in newer OpenClaw versions.
+    # We use native 'jq' to perform a lightning-fast schema check instead of booting the heavy node doctor.
+    if jq -e '.auth.profiles != null' "$CONFIG_FILE" > /dev/null 2>&1; then
+        echo "⚠️ CRITICAL: Found legacy 'auth.profiles' in openclaw.json! OpenClaw gateway would crash."
+        echo "🚑 Auto-healing: Stripping corrupted auth profiles from main config..."
         cp "$CONFIG_FILE" "${CONFIG_FILE}.corrupt.bak"
-        # Safely remove the entire auth.profiles object which is the most common cause of strict schema violations
-        cat "$CONFIG_FILE" | jq 'del(.auth.profiles)' > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        jq 'del(.auth.profiles)' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         echo "✅ Auto-heal applied successfully. Corrupted config backed up to ${CONFIG_FILE}.corrupt.bak"
     else
-        echo "✅ Config schema is valid."
+        echo "✅ Config schema is clean."
     fi
 fi
 
