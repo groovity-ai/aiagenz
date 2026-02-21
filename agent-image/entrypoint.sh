@@ -147,10 +147,10 @@ export CI=true
 
 # --- 4. Launch ---
 echo "⚙️  Optimizing OpenClaw CLI for low-memory environments..."
-cat << 'EOF' > /usr/local/bin/openclaw
+cat << EOF > /usr/local/bin/openclaw
 #!/bin/bash
-export NODE_OPTIONS="--max-old-space-size=128"
-exec node /app/openclaw.mjs "$@"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=256}"
+exec node /app/openclaw.mjs "\$@"
 EOF
 chmod +x /usr/local/bin/openclaw
 
