@@ -184,7 +184,7 @@ su node -s /bin/bash -c "
   export NODE_OPTIONS='${NODE_OPTIONS}'
   exec node /app/openclaw.mjs gateway \
     --port 18789 \
-    --bind 0.0.0.0 \
+    --bind lan \
     --token '${OPENCLAW_GATEWAY_TOKEN}' \
     --allow-unconfigured
 "
