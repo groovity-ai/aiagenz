@@ -97,10 +97,14 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
         if (!confirm("Are you sure? This will destroy the agent container.")) return
         setLoading(true)
         try {
-            await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+            const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}))
+                throw new Error(errData.error || errData.message || res.statusText || 'Deletion failed')
+            }
             router.push('/dashboard')
-        } catch (e) {
-            alert("Delete failed")
+        } catch (e: any) {
+            alert(`Delete failed: ${e.message}`)
             setLoading(false)
         }
     }

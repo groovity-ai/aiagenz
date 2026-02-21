@@ -142,6 +142,7 @@ func main() {
 		// Projects
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
+		r.Delete("/api/projects/{id}", projectHandler.Delete)
 
 		// Specific routes BEFORE generic {id} route
 		r.Get("/api/projects/{id}/config", projectHandler.GetRuntimeConfig)

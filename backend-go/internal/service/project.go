@@ -487,6 +487,36 @@ func (s *ProjectService) Control(ctx context.Context, id, userID string, action 
 	return nil
 }
 
+// Delete permanently removes a project, its container, and database record.
+func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil {
+		return domain.ErrInternal("failed to check project", err)
+	}
+	if project == nil {
+		return domain.ErrNotFound("project not found")
+	}
+
+	// 1. Force remove container if it exists
+	if project.ContainerID != nil && *project.ContainerID != "" {
+		log.Printf("[INFO] Deleting container %s for project %s", *project.ContainerID, id)
+		if err := s.container.Remove(ctx, *project.ContainerID); err != nil {
+			// Ignore "No such container" errors since we want to delete anyway
+			if !strings.Contains(err.Error(), "No such container") {
+				log.Printf("[WARN] Failed to remove container %s: %v", *project.ContainerID, err)
+			}
+		}
+	}
+
+	// 2. Delete from Database
+	log.Printf("[INFO] Deleting project record %s from database", id)
+	if err := s.repo.Delete(ctx, id, userID); err != nil {
+		return domain.ErrInternal("failed to delete project database record", err)
+	}
+
+	return nil
+}
+
 // CallBridge executes an HTTP request to the container's internal bridge plugin.
 // Includes retry logic with backoff for non-command endpoints.
 // Uses host-mapped port (bypasses gVisor) when available, falls back to container IP.
@@ -1172,14 +1202,6 @@ func (s *ProjectService) OAuthSubmitCallback(ctx context.Context, projectID, use
 		return "", domain.ErrInternal("OAuth callback failed", fmt.Errorf("%s", sanitizeError(err.Error())))
 	}
 	return output, nil
-}
-
-func (s *ProjectService) Delete(ctx context.Context, id, userID string) error {
-	project, _ := s.repo.FindByID(ctx, id, userID)
-	if project != nil && project.ContainerID != nil {
-		_ = s.container.Remove(ctx, *project.ContainerID)
-	}
-	return s.repo.Delete(ctx, id, userID)
 }
 
 // reprovisionContainer creates a fresh container for an existing project.
