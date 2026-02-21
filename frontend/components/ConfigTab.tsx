@@ -197,43 +197,17 @@ function GeneralEditor({ config, projectId, availableModels, onUpdate }: {
 }) {
     const agent = config.agents?.list?.find((a) => a.id === 'main') || config.agents?.list?.[0] || {} as Agent
     const [model, setModel] = useState(agent.model || "")
-    const [prompt, setPrompt] = useState("")
     const [saving, setSaving] = useState(false)
-    const [loadingPrompt, setLoadingPrompt] = useState(true)
-
-    // Load system prompt from DB config (not container config)
-    useEffect(() => {
-        async function loadPrompt() {
-            try {
-                const res = await apiFetch(`/api/projects/${projectId}`)
-                if (res.ok) {
-                    const data = await res.json()
-                    setPrompt(data.config?.systemPrompt || "")
-                }
-            } catch (e) {
-                console.error("Failed to load system prompt", e)
-            } finally {
-                setLoadingPrompt(false)
-            }
-        }
-        loadPrompt()
-    }, [projectId])
 
     const handleSave = async () => {
         setSaving(true)
         try {
-            // Save model via OpenClaw CLI command
             if (model !== agent.model) {
                 await apiFetch(`/api/projects/${projectId}/command`, {
                     method: 'POST',
                     body: JSON.stringify({ args: ["config", "set", "agents.defaults.model.primary", model] })
                 })
             }
-            // Save system prompt to encrypted DB config
-            await apiFetch(`/api/projects/${projectId}`, {
-                method: 'PUT',
-                body: JSON.stringify({ systemPrompt: prompt })
-            })
             onUpdate()
             showToast("Agent settings updated!")
         } catch (e) {
@@ -247,7 +221,7 @@ function GeneralEditor({ config, projectId, availableModels, onUpdate }: {
         <Card>
             <CardHeader>
                 <CardTitle>Identity & Behavior</CardTitle>
-                <CardDescription>Configure the agent&apos;s brain and personality for web chat.</CardDescription>
+                <CardDescription>Configure the agent&apos;s brain. Personality is managed via SOUL.md inside the agent container.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -276,17 +250,7 @@ function GeneralEditor({ config, projectId, availableModels, onUpdate }: {
                         </select>
                     </div>
                 </div>
-                <div className="space-y-2">
-                    <Label>System Prompt</Label>
-                    <p className="text-xs text-muted-foreground">This prompt is injected as the first message in every web chat session, giving your agent its personality.</p>
-                    <textarea
-                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 min-h-[120px] font-mono"
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        placeholder="You are FUFUFAFA, a helpful and friendly AI assistant..."
-                        disabled={loadingPrompt}
-                    />
-                </div>
+                <p className="text-xs text-muted-foreground">To configure the agent&apos;s personality, edit <strong>SOUL.md</strong> via the Advanced Config tab or the Web Terminal.</p>
             </CardContent>
             <CardFooter>
                 <Button onClick={handleSave} disabled={saving}>

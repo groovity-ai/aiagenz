@@ -218,10 +218,6 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 	if req.Model != "" {
 		currentConfig.Model = req.Model
 	}
-	// SystemPrompt: always update if provided in the request (empty string clears it)
-	if req.SystemPrompt != "" {
-		currentConfig.SystemPrompt = req.SystemPrompt
-	}
 
 	// Encrypt updated config
 	configJSON, _ := json.Marshal(currentConfig)
@@ -441,7 +437,6 @@ func (s *ProjectService) GetByID(ctx context.Context, id, userID string) (*domai
 					APIKey:        maskSecret(cfg.APIKey),
 					Provider:      cfg.Provider,
 					Model:         cfg.Model,
-					SystemPrompt:  cfg.SystemPrompt,
 				}
 			}
 		}
