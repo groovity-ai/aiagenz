@@ -1593,17 +1593,16 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 		return domain.ErrInternal("container is unreachable", err)
 	}
 
-	// Strategy: Always prefer the host-mapped port (127.0.0.1:openClawPort).
-	// The container is always created with portBindings for OpenClaw (127.0.0.1:auto → 18789).
-	// This is reliable on ALL platforms (mac, linux VPS, docker-in-docker).
-	// Fallback to direct container IP only if host-mapped port is not available.
+	// Strategy: On Linux (production), backend and agent containers are on the same docker bridge,
+	// so the backend MUST use the agent container's direct IP (info.IP:18789).
+	// On Mac/Windows missing direct bridge routing, fallback to host-mapped port (127.0.0.1:OpenClawPort).
 	var target string
-	if info.OpenClawPort != "" {
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.OpenClawPort != "" {
 		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
 	} else if info.IP != "" {
-		// Last resort: try to reach the container via the Docker network bridge.
-		// Only works on Linux where the Docker bridge IP is directly routable from the host.
 		target = fmt.Sprintf("http://%s:18789", info.IP)
+	} else if info.OpenClawPort != "" {
+		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
 	} else {
 		return domain.ErrInternal("no openclaw API port available — try restarting the agent container", nil)
 	}
