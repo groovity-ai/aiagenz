@@ -1631,12 +1631,33 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 
 	var payload map[string]interface{}
 	if json.Unmarshal(bodyBytes, &payload) == nil {
-		// Inject stable user identifier for session derivation
-		payload["user"] = fmt.Sprintf("web:%s", userID)
+		// HARDCORE SYNC: Force Admin Web Chat to use Telegram Session
+		// This makes Web & Telegram share the exact same memory/context.
+		if userID == "13cd5bad-cabf-4c81-9172-e24f32edf7c7" {
+			payload["user"] = "telegram:41434457"
+		} else {
+			payload["user"] = fmt.Sprintf("web:%s", userID)
+		}
 
-		// Send only the latest message — OpenClaw manages session history internally
+		// REAL FIX: Fetch actual SOUL.md content to emulate Native Agent behavior
+		// Instead of telling the agent to "read" the file (which feels fake/detached),
+		// we inject the actual persona content directly into the system prompt.
+		soulContent := "You are a helpful AI assistant." // default
+		if out, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/workspace/SOUL.md"}); err == nil && out != "" {
+			soulContent = out
+		}
+
+		// Inject the RAW SOUL content as System Prompt
+		systemMsg := map[string]string{
+			"role":    "system",
+			"content": fmt.Sprintf("INTERNAL SYSTEM INSTRUCTION:\n\n%s\n\n(IMPORTANT: Act fully as this persona immediately. Do not mention that you are an AI or that you are reading this file.)", soulContent),
+		}
+
+		// Send System Prompt + Latest User Message
+		// OpenClaw manages session history internally, but we must bootstrap the persona context on every stateless request.
 		if msgs, ok := payload["messages"].([]interface{}); ok && len(msgs) > 0 {
-			payload["messages"] = []interface{}{msgs[len(msgs)-1]}
+			lastMsg := msgs[len(msgs)-1]
+			payload["messages"] = []interface{}{systemMsg, lastMsg}
 		}
 
 		if modified, marshalErr := json.Marshal(payload); marshalErr == nil {
