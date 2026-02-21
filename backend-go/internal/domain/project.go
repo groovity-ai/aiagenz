@@ -31,6 +31,7 @@ type ProjectConfig struct {
 	Model         string                 `json:"model,omitempty"`
 	Channels      map[string]interface{} `json:"channels,omitempty"`
 	AuthProfiles  map[string]interface{} `json:"authProfiles,omitempty"`
+	SystemPrompt  string                 `json:"systemPrompt,omitempty"`
 }
 
 // SafeProjectConfig returns masked config for API responses.
@@ -41,6 +42,7 @@ type SafeProjectConfig struct {
 	Model         string                 `json:"model,omitempty"`
 	Channels      map[string]interface{} `json:"channels,omitempty"`
 	AuthProfiles  map[string]interface{} `json:"authProfiles,omitempty"`
+	SystemPrompt  string                 `json:"systemPrompt,omitempty"`
 }
 
 // ProjectResponse is the API response for a project.
@@ -84,6 +86,7 @@ type UpdateProjectRequest struct {
 	APIKey        string `json:"apiKey"`
 	Provider      string `json:"provider"`
 	Model         string `json:"model"`
+	SystemPrompt  string `json:"systemPrompt"`
 }
 
 // LoginRequest is the validated input for logging in.
