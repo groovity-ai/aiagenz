@@ -1,5 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
-import { streamText } from 'ai';
+import { streamText, convertToModelMessages, UIMessage } from 'ai';
 import { cookies } from 'next/headers';
 
 // Allow streaming responses up to 60 seconds
@@ -15,8 +15,13 @@ export async function POST(
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('sb-localhost-auth-token')?.value || '';
 
-    // Parse the incoming chat messages from the Vercel AI SDK
-    const { messages } = await req.json();
+    // Parse the incoming chat payload from the Vercel AI SDK v6 DefaultChatTransport
+    // The transport sends { id, messages (UIMessage[]), trigger, messageId }
+    const body = await req.json();
+    const uiMessages: UIMessage[] = body.messages ?? [];
+
+    // Convert UIMessage[] (parts-based) to ModelMessage[] (content-based) for the LLM
+    const modelMessages = await convertToModelMessages(uiMessages);
 
     const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:4001';
 
@@ -34,11 +39,12 @@ export async function POST(
         }
     });
 
-    // Call the model via our custom provider. The model string is largely ignored by "main" agent unless routing
+    // Call the model via our custom provider
     const result = streamText({
         model: openclawProvider.chat('openclaw:main'),
-        messages,
+        messages: modelMessages,
     });
 
-    return result.toTextStreamResponse();
+    // Return in UIMessageStream format which DefaultChatTransport expects
+    return result.toUIMessageStreamResponse();
 }
