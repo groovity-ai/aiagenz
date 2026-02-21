@@ -53,11 +53,10 @@ export default function AgentChatPanel({
         setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '' }])
 
         try {
-            // Build the full message history in OpenAI format
-            const allMessages = [...messages, userMessage].map(m => ({
-                role: m.role,
-                content: m.content
-            }))
+            // Build the message payload — only send the latest message.
+            // OpenClaw manages session history internally via the "user" field
+            // injected by the Go backend, enabling SOUL.md, memory, and tools.
+            const latestMessage = { role: userMessage.role, content: userMessage.content }
 
             const controller = new AbortController()
             abortRef.current = controller
@@ -68,7 +67,7 @@ export default function AgentChatPanel({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     model: 'openclaw:main',
-                    messages: allMessages,
+                    messages: [latestMessage],
                     stream: true
                 }),
                 signal: controller.signal

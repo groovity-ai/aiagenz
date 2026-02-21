@@ -1623,59 +1623,34 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 		return domain.ErrInternal("no openclaw API port available — try restarting the agent container", nil)
 	}
 
-	// --- System Prompt Injection ---
-	// Load system prompt from encrypted project config
-	var systemPrompt string
-	if project.Config != nil {
-		decrypted, decErr := s.enc.Decrypt(string(project.Config))
-		if decErr == nil {
-			var cfg domain.ProjectConfig
-			if json.Unmarshal(decrypted, &cfg) == nil {
-				systemPrompt = cfg.SystemPrompt
-			}
+	// --- Session-Based Chat ---
+	// By injecting a stable "user" field, OpenClaw's Gateway derives a persistent
+	// session key (agent:main:<hash>), enabling the full agent pipeline:
+	// SOUL.md personality, memory, tools, and context compaction.
+	// This mirrors how Telegram and other native channels work.
+	bodyBytes, readErr := io.ReadAll(r.Body)
+	r.Body.Close()
+	if readErr != nil {
+		return domain.ErrInternal("failed to read request body", readErr)
+	}
+
+	var payload map[string]interface{}
+	if json.Unmarshal(bodyBytes, &payload) == nil {
+		// Inject stable user identifier for session derivation
+		payload["user"] = fmt.Sprintf("web:%s", userID)
+
+		// Send only the latest message — OpenClaw manages session history internally
+		if msgs, ok := payload["messages"].([]interface{}); ok && len(msgs) > 0 {
+			payload["messages"] = []interface{}{msgs[len(msgs)-1]}
+		}
+
+		if modified, marshalErr := json.Marshal(payload); marshalErr == nil {
+			bodyBytes = modified
 		}
 	}
 
-	// If we have a system prompt, intercept the request body and prepend it
-	if systemPrompt != "" {
-		bodyBytes, readErr := io.ReadAll(r.Body)
-		r.Body.Close()
-		if readErr != nil {
-			return domain.ErrInternal("failed to read request body", readErr)
-		}
-
-		var payload map[string]interface{}
-		if json.Unmarshal(bodyBytes, &payload) == nil {
-			if msgs, ok := payload["messages"].([]interface{}); ok {
-				// Only prepend if the first message is not already a system message
-				needsInjection := true
-				if len(msgs) > 0 {
-					if first, ok := msgs[0].(map[string]interface{}); ok {
-						if role, _ := first["role"].(string); role == "system" {
-							needsInjection = false
-						}
-					}
-				}
-				if needsInjection {
-					systemMsg := map[string]interface{}{
-						"role":    "system",
-						"content": systemPrompt,
-					}
-					payload["messages"] = append([]interface{}{systemMsg}, msgs...)
-				}
-			}
-
-			// Re-serialize the modified body
-			modifiedBody, marshalErr := json.Marshal(payload)
-			if marshalErr == nil {
-				bodyBytes = modifiedBody
-			}
-		}
-
-		// Replace the request body with the modified version
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
-	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	r.ContentLength = int64(len(bodyBytes))
 
 	targetURL, err := url.Parse(target)
 	if err != nil {
