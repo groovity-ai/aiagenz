@@ -161,17 +161,17 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
 
     return (
         <div className="space-y-6">
-            <Tabs defaultValue="general" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="general">General</TabsTrigger>
+            <Tabs defaultValue="channels" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                    {/* <TabsTrigger value="general">General</TabsTrigger> */}
                     <TabsTrigger value="channels">Channels</TabsTrigger>
                     <TabsTrigger value="llm">LLM Providers</TabsTrigger>
-                    <TabsTrigger value="aliases">Model Aliases</TabsTrigger>
+                    {/* <TabsTrigger value="aliases">Model Aliases</TabsTrigger> */}
                 </TabsList>
 
-                <TabsContent value="general" className="space-y-4">
+                {/* <TabsContent value="general" className="space-y-4">
                     <GeneralEditor config={config} projectId={projectId} availableModels={availableModels} onUpdate={refreshData} />
-                </TabsContent>
+                </TabsContent> */}
 
                 <TabsContent value="channels">
                     <ChannelsEditor config={config} projectId={projectId} onUpdate={refreshData} />
@@ -181,9 +181,9 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
                     <LLMEditor config={config} projectId={projectId} availableModels={availableModels} onUpdate={refreshData} />
                 </TabsContent>
 
-                <TabsContent value="aliases">
+                {/* <TabsContent value="aliases">
                     <AliasesEditor config={config} projectId={projectId} onUpdate={refreshData} />
-                </TabsContent>
+                </TabsContent> */}
             </Tabs>
         </div>
     )
