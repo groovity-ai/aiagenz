@@ -33,11 +33,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
 
     return (
-        <div className="flex min-h-screen bg-muted/10">
+        <div className="flex min-h-screen bg-background">
             {/* Sidebar */}
-            <aside className="fixed top-0 left-0 z-30 hidden w-64 h-screen border-r bg-background md:flex md:flex-col transition-all duration-300">
-                <div className="flex h-16 items-center border-b px-6">
-                    <Link href="/" className="flex items-center gap-2 font-bold text-lg">
+            <aside className="fixed top-0 left-0 z-30 hidden w-64 h-screen border-r border-border/50 bg-sidebar md:flex md:flex-col transition-all duration-300">
+                <div className="flex h-16 items-center px-6">
+                    <Link href="/" className="flex items-center gap-3 font-bold text-lg tracking-tight">
                         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                             <Terminal className="h-4 w-4" />
                         </div>
@@ -52,11 +52,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 key={item.href}
                                 href={item.href}
                                 className={cn(
-                                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                                    pathname === item.href ? "bg-muted text-foreground" : "text-muted-foreground"
+                                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                                    pathname === item.href
+                                        ? "bg-primary/5 text-primary shadow-sm ring-1 ring-primary/10"
+                                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                                 )}
                             >
-                                <item.icon className="h-4 w-4" />
+                                <item.icon className={cn("h-4 w-4", pathname === item.href ? "text-primary" : "text-muted-foreground")} />
                                 {item.title}
                             </Link>
                         ))}

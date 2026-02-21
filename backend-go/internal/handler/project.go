@@ -141,6 +141,17 @@ func (h *ProjectHandler) Control(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+// ChatStream handles POST /api/projects/{id}/chat.
+// It acts as a reverse proxy to stream OpenAI-compatible chat completions directly from the agent container.
+func (h *ProjectHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.ProxyChatCompletions(r.Context(), id, userID, w, r); err != nil {
+		Error(w, err)
+	}
+}
+
 // Delete handles DELETE /api/projects/{id}.
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)

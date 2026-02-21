@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -758,6 +760,13 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 				"auth": map[string]interface{}{
 					"mode":  "token",
 					"token": project.ID,
+				},
+				"http": map[string]interface{}{
+					"endpoints": map[string]interface{}{
+						"chatCompletions": map[string]interface{}{
+							"enabled": true,
+						},
+					},
 				},
 			},
 			"plugins": map[string]interface{}{
@@ -1564,5 +1573,60 @@ func validateConfigUpdate(config map[string]interface{}) error {
 		}
 	}
 
+	return nil
+}
+
+// ProxyChatCompletions streams chat from Next.js to the OpenClaw HTTP API inside Docker.
+func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID string, w http.ResponseWriter, r *http.Request) error {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil || project == nil {
+		return domain.ErrNotFound("project not found")
+	}
+
+	if project.ContainerID == nil || project.Status != "running" {
+		return domain.ErrBadRequest("agent container is not running")
+	}
+
+	info, err := s.container.Inspect(ctx, *project.ContainerID)
+	if err != nil || info.Status != "running" {
+		return domain.ErrInternal("container is unreachable", err)
+	}
+
+	var target string
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.OpenClawPort != "" {
+		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
+	} else if info.IP != "" {
+		target = fmt.Sprintf("http://%s:18789", info.IP)
+	} else if info.OpenClawPort != "" {
+		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
+	} else {
+		return domain.ErrInternal("no openclaw API port available", nil)
+	}
+
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		return domain.ErrInternal("failed to parse target URL", err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+	// OpenClaw SSE needs continuous flushing to avoid stuttering
+	proxy.FlushInterval = 50 * time.Millisecond
+
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+
+		// Force the routing to the chat completions endpoint native to OpenClaw
+		req.URL.Path = "/v1/chat/completions"
+
+		// Inject the Gateway Token (defined as project.ID in our GetRuntimeConfig)
+		req.Header.Set("Authorization", "Bearer "+project.ID)
+
+		// Target the default agent inside OpenClaw
+		req.Header.Set("x-openclaw-agent-id", "main")
+	}
+
+	proxy.ServeHTTP(w, r)
 	return nil
 }

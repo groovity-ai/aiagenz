@@ -31,17 +31,19 @@ type ContainerService struct {
 
 // ContainerInfo holds the runtime status of a container.
 type ContainerInfo struct {
-	Status     string `json:"status"`
-	Uptime     string `json:"uptime,omitempty"`
-	IP         string `json:"ip,omitempty"`
-	BridgePort string `json:"bridgePort,omitempty"` // Host-mapped port for Bridge plugin
-	TtydPort   string `json:"ttydPort,omitempty"`   // Host-mapped port for ttyd
+	Status       string `json:"status"`
+	Uptime       string `json:"uptime,omitempty"`
+	IP           string `json:"ip,omitempty"`
+	BridgePort   string `json:"bridgePort,omitempty"`   // Host-mapped port for Bridge plugin
+	TtydPort     string `json:"ttydPort,omitempty"`     // Host-mapped port for ttyd
+	OpenClawPort string `json:"openClawPort,omitempty"` // Host-mapped port for OpenClaw Gateway
 }
 
 const (
-	NetworkName    = "aiagenz-network"
-	BridgeContPort = "4444/tcp" // Bridge plugin port inside container
-	TtydContPort   = "7681/tcp" // ttyd web terminal port
+	NetworkName      = "aiagenz-network"
+	BridgeContPort   = "4444/tcp"  // Bridge plugin port inside container
+	TtydContPort     = "7681/tcp"  // ttyd web terminal port
+	OpenClawContPort = "18789/tcp" // OpenClaw Gateway port
 )
 
 // NewContainerService creates a new Docker client.
@@ -115,12 +117,21 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 		}
 	}
 
+	// Extract host-mapped OpenClaw Gateway port
+	openClawPort := ""
+	if info.NetworkSettings != nil && info.NetworkSettings.Ports != nil {
+		if bindings, ok := info.NetworkSettings.Ports[nat.Port(OpenClawContPort)]; ok && len(bindings) > 0 {
+			openClawPort = bindings[0].HostPort
+		}
+	}
+
 	return &ContainerInfo{
-		Status:     info.State.Status,
-		Uptime:     info.State.StartedAt,
-		IP:         ip,
-		BridgePort: bridgePort,
-		TtydPort:   ttydPort,
+		Status:       info.State.Status,
+		Uptime:       info.State.StartedAt,
+		IP:           ip,
+		BridgePort:   bridgePort,
+		TtydPort:     ttydPort,
+		OpenClawPort: openClawPort,
 	}, nil
 }
 
@@ -166,13 +177,18 @@ func (s *ContainerService) Create(ctx context.Context, name, image string, env [
 	// Bridge port mapping: container:4444 → host:auto (bound to 127.0.0.1)
 	bridgePort := nat.Port(BridgeContPort)
 	ttydPort := nat.Port(TtydContPort)
+	openclawPort := nat.Port(OpenClawContPort)
 	exposedPorts := nat.PortSet{
-		bridgePort: struct{}{},
-		ttydPort:   struct{}{},
+		bridgePort:   struct{}{},
+		ttydPort:     struct{}{},
+		openclawPort: struct{}{},
 	}
 	portBindings := nat.PortMap{
 		bridgePort: []nat.PortBinding{
 			{HostIP: "127.0.0.1", HostPort: ""}, // empty = Docker auto-assigns
+		},
+		openclawPort: []nat.PortBinding{
+			{HostIP: "127.0.0.1", HostPort: ""},
 		},
 		ttydPort: []nat.PortBinding{
 			{HostIP: "0.0.0.0", HostPort: ""}, // Publicly accessible for Web Terminal

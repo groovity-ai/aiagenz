@@ -14,6 +14,8 @@ import { SkillsTab } from "@/components/SkillsTab"
 import { AutomationTab } from "@/components/AutomationTab"
 import { OverviewTab } from "@/components/OverviewTab"
 import { AdvancedConfigTab } from "@/components/AdvancedConfigTab"
+import AgentChatPanel from "@/components/AgentChatPanel"
+import { MessageCircle } from "lucide-react"
 
 interface Project {
     id: string
@@ -37,6 +39,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
     const [project, setProject] = useState<Project | null>(null)
     const [logs, setLogs] = useState<string>("")
     const [loading, setLoading] = useState(false)
+    const [isChatOpen, setIsChatOpen] = useState(false)
 
     // Polling Status & Logs
     useEffect(() => {
@@ -113,6 +116,12 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
 
     return (
         <div className="flex min-h-screen flex-col bg-muted/40">
+            <AgentChatPanel
+                projectId={project.id}
+                projectName={project.name}
+                open={isChatOpen}
+                onClose={() => setIsChatOpen(false)}
+            />
             <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background px-6">
                 <Link href="/dashboard">
                     <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
@@ -122,6 +131,15 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                     {project.status?.toUpperCase()}
                 </Badge>
                 <div className="ml-auto flex items-center gap-2">
+                    {project.status === 'running' && (
+                        <Button
+                            size="sm" variant="secondary" className="gap-1.5"
+                            onClick={() => setIsChatOpen(true)}
+                        >
+                            <MessageCircle className="h-4 w-4" />
+                            <span className="hidden sm:inline">Direct Chat</span>
+                        </Button>
+                    )}
                     <Button
                         size="sm" variant="outline" className="gap-2 text-red-500 hover:text-red-600"
                         onClick={() => handleControl('stop')} disabled={loading || project.status !== 'running' || isProvisioning}
