@@ -82,6 +82,10 @@ func main() {
 	subRepo := repository.NewSubscriptionRepository(db)
 	subSvc := service.NewSubscriptionService(subRepo, userRepo, mockPayment)
 
+	// System Cache & Models
+	cacheRepo := repository.NewCacheRepository(db)
+	systemSvc := service.NewSystemService(cacheRepo, containerSvc)
+
 	// Start Monitoring Service
 	if containerSvc != nil {
 		monitorService := service.NewMonitorService(db, containerSvc)
@@ -98,6 +102,7 @@ func main() {
 	plansHandler := handler.NewPlansHandler()
 	paymentHandler := handler.NewPaymentHandler(subSvc)
 	adminHandler := handler.NewAdminHandler(db, authSvc)
+	systemHandler := handler.NewSystemHandler(systemSvc)
 	consoleHandler := ws.NewConsoleHandler(projectRepo, containerSvc, authSvc)
 
 	// Build router
@@ -139,6 +144,10 @@ func main() {
 		r.Post("/api/auth/logout", authHandler.Logout)
 		r.Get("/api/auth/me", authHandler.Me)
 
+		// System Models
+		r.Get("/api/models", systemHandler.GetModels)
+		r.Post("/api/models/sync", systemHandler.SyncModels)
+
 		// Projects
 		r.Get("/api/projects", projectHandler.List)
 		r.Post("/api/projects", projectHandler.Create)
@@ -146,7 +155,6 @@ func main() {
 		// Specific routes BEFORE generic {id} route
 		r.Get("/api/projects/{id}/config", projectHandler.GetRuntimeConfig)
 		r.Put("/api/projects/{id}/config", projectHandler.UpdateRuntimeConfig)
-		r.Get("/api/projects/{id}/models", projectHandler.GetModels)
 
 		// Specific CLI Wrappers (with stricter rate limit — each spawns docker exec)
 		cliRL := appMiddleware.NewRateLimiter(5, 10) // 5 req/sec, burst 10

@@ -130,5 +130,16 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("failed to run metrics migrations: %w", err)
 	}
 
+	// Add System Cache table
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS system_cache (
+			key TEXT PRIMARY KEY,
+			data JSONB NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to run system cache migrations: %w", err)
+	}
+
 	return nil
 }

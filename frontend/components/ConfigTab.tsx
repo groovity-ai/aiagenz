@@ -137,7 +137,7 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
 
     const fetchModels = useCallback(async () => {
         try {
-            const res = await apiFetch(`/api/projects/${projectId}/models`)
+            const res = await apiFetch(`/api/models`)
             if (res.ok) {
                 const data = await res.json()
                 setAvailableModels(data.models || [])
@@ -145,7 +145,7 @@ export function ConfigTab({ projectId }: ConfigTabProps) {
         } catch (error) {
             console.error("Failed to load models", error)
         }
-    }, [projectId])
+    }, [])
 
     const refreshData = useCallback(() => {
         fetchConfig()

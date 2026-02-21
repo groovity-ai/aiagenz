@@ -124,6 +124,25 @@ func (s *ContainerService) Inspect(ctx context.Context, containerID string) (*Co
 	}, nil
 }
 
+// ListRunningContainerIDs returns a list of active OpenClaw container IDs to use as proxy bridges.
+func (s *ContainerService) ListRunningContainerIDs(ctx context.Context) ([]string, error) {
+	containers, err := s.cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var activeIDs []string
+	for _, c := range containers {
+		if c.State == "running" && len(c.Names) > 0 {
+			// Basic heuristic to only match our agent containers
+			if bytes.Contains([]byte(c.Names[0]), []byte("aiagenz")) || bytes.Contains([]byte(c.Image), []byte("aiagenz-agent")) {
+				activeIDs = append(activeIDs, c.ID)
+			}
+		}
+	}
+	return activeIDs, nil
+}
+
 // ContainerResources defines resource limits for a container.
 type ContainerResources struct {
 	MemoryMB int64   // Memory limit in MB
