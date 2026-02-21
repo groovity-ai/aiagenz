@@ -101,6 +101,38 @@ const handlers = {
                 delete updates.channels.telegram.accounts.default.token;
             }
 
+            // Handle auth profiles: route secrets to auth-profiles.json and sanitize for openclaw.json
+            if (updates.auth && updates.auth.profiles) {
+                const authStore = readJson(AUTH_PROFILES_PATH);
+                if (!authStore.profiles) authStore.profiles = {};
+                let authStoreUpdated = false;
+
+                const sanitizedProfiles = {};
+                for (const [k, v] of Object.entries(updates.auth.profiles)) {
+                    if (v && typeof v === 'object') {
+                        const typeVal = v.type || v.mode || 'api_key';
+
+                        // 1. Save secret to auth-profiles.json
+                        authStore.profiles[k] = { ...v, type: typeVal };
+                        delete authStore.profiles[k].mode;
+                        authStoreUpdated = true;
+
+                        // 2. Prepare sanitized version for openclaw.json
+                        sanitizedProfiles[k] = { ...v, mode: typeVal };
+                        delete sanitizedProfiles[k].type;
+                        delete sanitizedProfiles[k].key;
+                    }
+                }
+
+                if (authStoreUpdated) {
+                    authStore.version = 1;
+                    writeJson(AUTH_PROFILES_PATH, authStore);
+                }
+
+                // Replace profiles in updates with sanitized version
+                updates.auth.profiles = sanitizedProfiles;
+            }
+
             const merged = mergeDeep(current, updates);
             writeJson(CONFIG_PATH, merged);
 
