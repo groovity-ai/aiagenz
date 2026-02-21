@@ -1,9 +1,10 @@
 "use client"
 
 import { useChat } from '@ai-sdk/react'
+import { DefaultChatTransport } from 'ai'
 import { X, Send, User, Bot, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export default function AgentChatPanel({
     projectId,
@@ -16,11 +17,34 @@ export default function AgentChatPanel({
     open: boolean;
     onClose: () => void;
 }) {
-    // The Vercel AI SDK useChat hook automatically handles the SSE streaming, message history, and input state
-    const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
-        api: `/api/projects/${projectId}/chat`,
-        id: projectId // Scope the chat history strictly to this project
+    // The Vercel AI SDK useChat hook now purely manages the SSE chat array state and connection
+    const { messages, sendMessage, status, error } = useChat({
+        id: projectId, // Scope the chat history strictly to this project
+        transport: new DefaultChatTransport({
+            api: `/api/projects/${projectId}/chat`
+        })
     })
+
+    const [input, setInput] = useState("")
+    const isLoading = status === 'streaming' || status === 'submitted';
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setInput(e.target.value)
+    }
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!input.trim() || isLoading) return
+
+        const text = input
+        setInput("")
+
+        await sendMessage({
+            id: Date.now().toString(),
+            role: 'user',
+            parts: [{ type: 'text', text }]
+        })
+    }
 
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -81,7 +105,12 @@ export default function AgentChatPanel({
                                         ? 'bg-primary text-primary-foreground rounded-tr-sm shadow-sm'
                                         : 'bg-muted/30 text-foreground rounded-tl-sm border border-border/50 shadow-sm'
                                         }`}>
-                                        <span className="whitespace-pre-wrap leading-relaxed">{m.content}</span>
+                                        <div className="whitespace-pre-wrap flex flex-col gap-2 leading-relaxed">
+                                            {m.parts?.map((part: any, i: number) => {
+                                                if (part.type === 'text') return <span key={i}>{part.text}</span>
+                                                return null
+                                            })}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
