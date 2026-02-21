@@ -115,37 +115,46 @@
 }
 
 .dark {
-  /* AiAgenz Dark Theme: Deep Void */
-  --background: oklch(0.05 0 0);
-  /* Almost Pitch Black */
-  --foreground: oklch(0.985 0 0);
+  /* AiAgenz Dark Theme: Premium Slate / High-Contrast Depth */
+  /* We introduce a very subtle cool blue-slate tint (hue 260, chroma 0.012) 
+     and distinct lightness steps for perfect layering. */
+  --background: oklch(0.140 0.012 260);
+  /* Deep slate void */
+  --foreground: oklch(0.985 0.005 260);
 
-  --card: oklch(0.08 0 0);
-  /* Slightly Lighter Black */
-  --card-foreground: oklch(0.985 0 0);
+  --card: oklch(0.190 0.015 260);
+  /* Distinctly raised surfaces */
+  --card-foreground: oklch(0.985 0.005 260);
 
-  --popover: oklch(0.08 0 0);
-  --popover-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.190 0.015 260);
+  --popover-foreground: oklch(0.985 0.005 260);
 
-  /* Primary: White for buttons */
-  --primary: oklch(1 0 0);
-  --primary-foreground: oklch(0 0 0);
+  /* Primary: Crisp White for highest emphasis */
+  --primary: oklch(0.985 0.005 260);
+  --primary-foreground: oklch(0.140 0.012 260);
 
-  --secondary: oklch(0.15 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.250 0.020 260);
+  /* Clear separation for secondary buttons/surfaces */
+  --secondary-foreground: oklch(0.985 0.005 260);
 
-  --muted: oklch(0.15 0 0);
-  --muted-foreground: oklch(0.708 0 0);
+  --muted: oklch(0.220 0.020 260);
+  /* Softer than secondary */
+  --muted-foreground: oklch(0.700 0.010 260);
 
-  --accent: oklch(0.12 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --accent: oklch(0.250 0.020 260);
+  /* Visible hover states */
+  --accent-foreground: oklch(0.985 0.005 260);
 
-  --destructive: oklch(0.704 0.191 22.216);
+  --destructive: oklch(0.550 0.180 22);
+  /* Eye-safe dark red */
+  --destructive-foreground: oklch(0.985 0 0);
 
-  --border: oklch(0.15 0 0);
-  --input: oklch(0.15 0 0);
-  --ring: oklch(0.8 0 0);
-  /* White ring focus */
+  --border: oklch(0.280 0.020 260);
+  /* Crisp, definitive borders connecting surfaces */
+  --input: oklch(0.220 0.020 260);
+  /* Slightly inset inputs relative to cards */
+  --ring: oklch(0.985 0.005 260);
+  /* Glowing white ring focus */
 
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
@@ -153,14 +162,15 @@
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
 
-  --sidebar: oklch(0.08 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.160 0.015 260);
+  /* Sidebar naturally steps out from background */
+  --sidebar-foreground: oklch(0.985 0.005 260);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.15 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.2 0 0);
-  --sidebar-ring: oklch(0.8 0 0);
+  --sidebar-accent: oklch(0.250 0.020 260);
+  --sidebar-accent-foreground: oklch(0.985 0.005 260);
+  --sidebar-border: oklch(0.280 0.020 260);
+  --sidebar-ring: oklch(0.985 0.005 260);
 }
 
 @layer base {
