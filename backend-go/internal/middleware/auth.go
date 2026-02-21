@@ -27,8 +27,8 @@ func Auth(authSvc *service.AuthService) func(next http.Handler) http.Handler {
 			// Fallback to cookie if no Authorization header is present.
 			// This is needed for direct browser -> Go API calls (like SSE streaming).
 			if tokenString == "" {
-				// Check for common Supabase auth cookie names
-				cookieNames := []string{"sb-localhost-auth-token", "sb-aiagenz-auth-token", "sb-auth-token"}
+				// Check for common Supabase auth cookie names as well as generic ones
+				cookieNames := []string{"token", "sb-localhost-auth-token", "sb-aiagenz-auth-token", "sb-auth-token"}
 				for _, name := range cookieNames {
 					if cookie, err := r.Cookie(name); err == nil && cookie.Value != "" {
 						tokenString = cookie.Value
