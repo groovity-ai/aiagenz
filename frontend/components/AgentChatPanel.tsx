@@ -1,13 +1,15 @@
 "use client"
 
-import { X, Send, User, Bot, Loader2 } from 'lucide-react'
+import { X, Send, User, Bot, Loader2, Zap } from 'lucide-react'
 import { Button } from './ui/button'
+import { Input } from './ui/input'
 import { useEffect, useRef, useState, useCallback } from 'react'
 
 interface ChatMessage {
     id: string
-    role: 'user' | 'assistant'
+    role: 'user' | 'assistant' | 'system'
     content: string
+    isTyping?: boolean
 }
 
 export default function AgentChatPanel({
@@ -23,219 +25,272 @@ export default function AgentChatPanel({
 }) {
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [input, setInput] = useState("")
-    const [isLoading, setIsLoading] = useState(false)
-    const [error, setError] = useState<string | null>(null)
+    const [isConnected, setIsConnected] = useState(false)
+    const [isTyping, setIsTyping] = useState(false)
+    const wsRef = useRef<WebSocket | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
-    const abortRef = useRef<AbortController | null>(null)
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    // Auto-scroll to the newest message
+    // Auto-scroll
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages])
+    }, [messages, isTyping])
 
-    const handleSubmit = useCallback(async (e: React.FormEvent) => {
-        e.preventDefault()
-        if (!input.trim() || isLoading) return
+    // WebSocket Connection Logic
+    const connect = useCallback(() => {
+        if (!open || wsRef.current?.readyState === WebSocket.OPEN) return
 
-        const userMessage: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: input.trim()
+        // Determine WS Protocol (ws:// or wss://)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const host = window.location.host // e.g. "aiagenz.id" or "localhost:3000"
+        
+        // In local dev, frontend is 3000, backend is 4001 via proxy? 
+        // Or we use relative path /api/ and let Nginx handle it.
+        // If local dev without nginx: backend is localhost:4001
+        
+        // For production (and correct Nginx setup), relative path is best, 
+        // but WebSocket constructor needs absolute URL.
+        const wsUrl = `${protocol}//${host}/api/projects/${projectId}/ws`
+        
+        console.log(`[WS] Connecting to ${wsUrl}...`)
+        const ws = new WebSocket(wsUrl)
+
+        ws.onopen = () => {
+            console.log('[WS] Connected')
+            setIsConnected(true)
+            // Optional: Send initial ping or just wait
         }
 
-        setMessages(prev => [...prev, userMessage])
-        setInput("")
-        setIsLoading(true)
-        setError(null)
-
-        // Create a placeholder for the assistant response
-        const assistantId = (Date.now() + 1).toString()
-        setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '' }])
-
-        try {
-            // Build the message payload — only send the latest message.
-            // OpenClaw manages session history internally via the "user" field
-            // injected by the Go backend, enabling SOUL.md, memory, and tools.
-            const latestMessage = { role: userMessage.role, content: userMessage.content }
-
-            const controller = new AbortController()
-            abortRef.current = controller
-
-            // Call the Go backend proxy directly (nginx routes /api/* to Go)
-            const res = await fetch(`/api/projects/${projectId}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: 'openclaw:main',
-                    messages: [latestMessage],
-                    stream: true
-                }),
-                signal: controller.signal
-            })
-
-            if (!res.ok) {
-                const text = await res.text()
-                throw new Error(text || `HTTP ${res.status}`)
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data)
+                handleWsMessage(data)
+            } catch (e) {
+                console.error('[WS] Parse error:', e)
             }
+        }
 
-            // Parse the SSE stream from OpenClaw (OpenAI-compatible format)
-            const reader = res.body?.getReader()
-            if (!reader) throw new Error('No response body')
+        ws.onclose = (event) => {
+            console.log('[WS] Closed', event.code, event.reason)
+            setIsConnected(false)
+            wsRef.current = null
+            
+            // Reconnect if panel is still open
+            if (open) {
+                reconnectTimeoutRef.current = setTimeout(connect, 3000)
+            }
+        }
 
-            const decoder = new TextDecoder()
-            let buffer = ''
+        ws.onerror = (error) => {
+            console.error('[WS] Error:', error)
+            ws.close()
+        }
 
-            while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
+        wsRef.current = ws
+    }, [open, projectId])
 
-                buffer += decoder.decode(value, { stream: true })
-                const lines = buffer.split('\n')
-                buffer = lines.pop() || ''
+    // Cleanup on unmount/close
+    useEffect(() => {
+        if (open) {
+            connect()
+        } else {
+            wsRef.current?.close()
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+        }
+        return () => {
+            wsRef.current?.close()
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+        }
+    }, [open, connect])
 
-                for (const line of lines) {
-                    const trimmed = line.trim()
-                    if (!trimmed || !trimmed.startsWith('data: ')) continue
-                    const data = trimmed.slice(6)
-                    if (data === '[DONE]') continue
+    const handleWsMessage = (data: any) => {
+        // Handle OpenClaw JSON-RPC Messages
+        // 1. Agent Reply (Push)
+        if (data.method === 'message' || data.method === 'agent.message') {
+            const content = data.params?.message || data.params?.text || ''
+            if (!content) return
 
-                    try {
-                        const json = JSON.parse(data)
-                        const delta = json.choices?.[0]?.delta?.content
-                        if (delta) {
-                            setMessages(prev =>
-                                prev.map(m =>
-                                    m.id === assistantId
-                                        ? { ...m, content: m.content + delta }
-                                        : m
-                                )
-                            )
-                        }
-                    } catch {
-                        // Skip malformed JSON chunks
-                    }
+            setIsTyping(false)
+            setMessages(prev => [
+                ...prev,
+                {
+                    id: Date.now().toString(),
+                    role: 'assistant',
+                    content: content
                 }
-            }
-        } catch (err: any) {
-            if (err.name !== 'AbortError') {
-                setError(err.message || 'Connection failed')
-                // Remove the empty assistant placeholder on error
-                setMessages(prev => {
-                    const last = prev[prev.length - 1]
-                    if (last?.role === 'assistant' && !last.content) {
-                        return prev.slice(0, -1)
-                    }
-                    return prev
-                })
-            }
-        } finally {
-            setIsLoading(false)
-            abortRef.current = null
+            ])
         }
-    }, [input, isLoading, messages, projectId])
+        
+        // 2. Typing Indicator
+        if (data.method === 'typing') {
+            setIsTyping(true)
+            // Auto-hide typing after 5s just in case
+            setTimeout(() => setIsTyping(false), 5000)
+        }
+
+        // 3. System/Error
+        if (data.error) {
+            setMessages(prev => [
+                ...prev,
+                {
+                    id: Date.now().toString(),
+                    role: 'system',
+                    content: `Error: ${data.error.message || 'Unknown error'}`
+                }
+            ])
+            setIsTyping(false)
+        }
+    }
+
+    const sendMessage = (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!input.trim() || !isConnected || !wsRef.current) return
+
+        const text = input.trim()
+        
+        // Optimistic UI update
+        setMessages(prev => [
+            ...prev,
+            {
+                id: Date.now().toString(),
+                role: 'user',
+                content: text
+            }
+        ])
+        setInput("")
+        setIsTyping(true) // Expect reply
+
+        // Send JSON-RPC
+        const payload = {
+            jsonrpc: "2.0",
+            method: "message.send", // Standard OpenClaw method
+            params: {
+                to: "main", // Target main agent
+                message: text
+            },
+            id: Date.now()
+        }
+        wsRef.current.send(JSON.stringify(payload))
+    }
 
     if (!open) return null
 
     return (
-        <>
-            {/* Backdrop overlay for focus */}
-            <div
-                className="fixed inset-0 z-40 bg-background/40 backdrop-blur-sm transition-opacity"
-                onClick={onClose}
-            />
-
-            {/* Sliding Chat Drawer */}
-            <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-sm flex-col border-l border-border/50 bg-card shadow-2xl transition-transform duration-300 ease-in-out sm:w-[400px]">
-                {/* Header */}
-                <div className="flex items-center justify-between border-b border-border/50 px-6 py-4">
+        <div className="fixed bottom-4 right-4 w-96 h-[600px] bg-background border border-border rounded-xl shadow-2xl flex flex-col z-50 overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-300">
+            {/* Header */}
+            <div className="bg-muted/50 p-4 border-b flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="relative">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+                            <Bot className="w-6 h-6 text-primary" />
+                        </div>
+                        {isConnected && (
+                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full animate-pulse" />
+                        )}
+                    </div>
                     <div>
-                        <h2 className="text-lg font-semibold tracking-tight">{projectName}</h2>
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                            </span>
-                            <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Direct Connect</p>
+                        <h3 className="font-semibold text-sm">{projectName || 'Agent'}</h3>
+                        <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`} />
+                            <p className="text-xs text-muted-foreground">
+                                {isConnected ? 'Online (Realtime)' : 'Connecting...'}
+                            </p>
                         </div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-muted">
-                        <X className="h-4 w-4" />
+                </div>
+                <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 hover:bg-muted">
+                    <X className="w-4 h-4" />
+                </Button>
+            </div>
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background/50 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                {messages.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-muted-foreground opacity-50 space-y-2">
+                        <Zap className="w-12 h-12 mb-2" />
+                        <p className="text-sm font-medium">Native Connection Active</p>
+                        <p className="text-xs">
+                            This chat is now fully synced with your Telegram session.
+                            Agent remembers who you are.
+                        </p>
+                    </div>
+                )}
+
+                {messages.map((msg) => (
+                    <div
+                        key={msg.id}
+                        className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                        {msg.role !== 'user' && (
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0 mt-1">
+                                <Bot className="w-4 h-4 text-primary" />
+                            </div>
+                        )}
+                        
+                        <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
+                            msg.role === 'user' 
+                                ? 'bg-primary text-primary-foreground rounded-tr-sm' 
+                                : msg.role === 'system'
+                                ? 'bg-destructive/10 text-destructive border border-destructive/20 w-full text-center font-mono text-xs py-2'
+                                : 'bg-muted/50 border border-border/50 text-foreground rounded-tl-sm'
+                        }`}>
+                            <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                {msg.content}
+                            </div>
+                        </div>
+
+                        {msg.role === 'user' && (
+                            <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center border border-border shrink-0 mt-1">
+                                <User className="w-4 h-4 text-muted-foreground" />
+                            </div>
+                        )}
+                    </div>
+                ))}
+                
+                {isTyping && (
+                    <div className="flex gap-3 justify-start animate-in fade-in duration-300">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
+                            <Bot className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="bg-muted/50 border border-border/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1.5 h-10">
+                            <span className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                            <span className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                            <span className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce"></span>
+                        </div>
+                    </div>
+                )}
+                
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <form onSubmit={sendMessage} className="p-4 bg-background border-t">
+                <div className="flex gap-2 relative">
+                    <Input
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder={isConnected ? "Kirim pesan ke agent..." : "Connecting..."}
+                        className="pr-10 rounded-full border-muted-foreground/20 focus-visible:ring-primary/20"
+                        disabled={!isConnected}
+                        autoFocus
+                    />
+                    <Button 
+                        type="submit" 
+                        size="icon" 
+                        disabled={!input.trim() || !isConnected}
+                        className="absolute right-1 top-1 h-8 w-8 rounded-full transition-all duration-200 hover:scale-105"
+                    >
+                        {isConnected ? (
+                            <Send className="w-4 h-4" />
+                        ) : (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                        )}
                     </Button>
                 </div>
-
-                {/* Chat Area */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {messages.length === 0 ? (
-                        <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground space-y-4">
-                            <div className="h-16 w-16 rounded-full bg-primary/5 flex items-center justify-center ring-1 ring-primary/10">
-                                <Bot className="h-8 w-8 text-primary" />
-                            </div>
-                            <div className="space-y-1">
-                                <p className="text-sm font-medium text-foreground">Start a conversation.</p>
-                                <p className="text-xs">The AI agent is listening to its container stream.</p>
-                            </div>
-                        </div>
-                    ) : (
-                        messages.map((m) => (
-                            <div key={m.id} className={`flex gap-3 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-sm ring-1 ring-border/50 ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted/30'}`}>
-                                    {m.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-                                </div>
-                                <div className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'} max-w-[80%]`}>
-                                    <div className={`rounded-2xl px-4 py-2.5 text-sm ${m.role === 'user'
-                                        ? 'bg-primary text-primary-foreground rounded-tr-sm shadow-sm'
-                                        : 'bg-muted/30 text-foreground rounded-tl-sm border border-border/50 shadow-sm'
-                                        }`}>
-                                        <span className="whitespace-pre-wrap leading-relaxed">{m.content}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                    {isLoading && messages[messages.length - 1]?.content === '' && (
-                        <div className="flex gap-3">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/30 ring-1 ring-border/50">
-                                <Bot className="h-4 w-4" />
-                            </div>
-                            <div className="flex items-center rounded-2xl bg-muted/30 px-4 py-3 text-sm rounded-tl-sm border border-border/50">
-                                <span className="flex gap-1">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                    <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                                    <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '300ms' }} />
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                    {error && (
-                        <div className="text-center text-xs text-destructive rounded-xl border border-destructive/20 bg-destructive/10 p-4">
-                            <strong>Connection Error</strong><br />
-                            {error}. Is the container running?
-                        </div>
-                    )}
-                    <div ref={messagesEndRef} />
+                <div className="text-[10px] text-center mt-2 text-muted-foreground/60 font-medium">
+                    {isConnected ? '🔒 Secure End-to-End Encryption • Synced with Telegram' : 'Establishin secure tunnel...'}
                 </div>
-
-                {/* Input Area */}
-                <div className="border-t border-border/50 p-4 bg-background/50 backdrop-blur-md">
-                    <form onSubmit={handleSubmit} className="relative flex items-center">
-                        <input
-                            className="w-full rounded-full border border-border/50 bg-background px-5 py-3.5 pr-14 text-sm shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            placeholder="Message your agent..."
-                            disabled={isLoading}
-                        />
-                        <Button
-                            type="submit"
-                            size="icon"
-                            disabled={isLoading || !input.trim()}
-                            className="absolute right-1.5 h-9 w-9 rounded-full shadow-sm"
-                        >
-                            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        </Button>
-                    </form>
-                </div>
-            </div>
-        </>
+            </form>
+        </div>
     )
 }

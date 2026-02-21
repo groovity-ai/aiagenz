@@ -20,7 +20,9 @@ import (
 	"github.com/aiagenz/backend/pkg/crypto"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
+
 
 // ProjectService handles business logic for projects.
 type ProjectService struct {
@@ -1713,5 +1715,187 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 	}
 
 	proxy.ServeHTTP(w, r)
+	return nil
+}
+
+// ProxyGatewayWS establishes a WebSocket tunnel to the agent's Native Gateway (Port 18789).
+// It handles authentication handshake and persona injection automatically.
+func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, w http.ResponseWriter, r *http.Request) error {
+	project, err := s.repo.FindByID(ctx, id, userID)
+	if err != nil || project == nil {
+		return domain.ErrNotFound("project not found")
+	}
+
+	if project.ContainerID == nil || project.Status != "running" {
+		return domain.ErrBadRequest("agent container is not running")
+	}
+
+	info, err := s.container.Inspect(ctx, *project.ContainerID)
+	if err != nil || info.Status != "running" {
+		return domain.ErrInternal("container is unreachable", err)
+	}
+
+	// Determine Agent WS Target
+	var targetHost string
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.OpenClawPort != "" {
+		targetHost = fmt.Sprintf("127.0.0.1:%s", info.OpenClawPort)
+	} else if info.IP != "" {
+		targetHost = fmt.Sprintf("%s:18789", info.IP)
+	} else {
+		return domain.ErrInternal("no openclaw API port available", nil)
+	}
+
+	// 1. Upgrade User Connection
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	userConn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[WS] Upgrade failed: %v", err)
+		return nil // Upgrade handles error response
+	}
+	defer userConn.Close()
+
+	// 2. Connect to Agent Gateway using OpenClaw Challenge-Response Auth Protocol
+	// 1. Connect without token
+	// 2. Server sends connect.challenge with nonce
+	// 3. We respond with connect.auth {token, nonce}
+	agentURL := url.URL{Scheme: "ws", Host: targetHost, Path: "/"}
+	requestHeader := http.Header{}
+	requestHeader.Add("Origin", fmt.Sprintf("http://%s", targetHost))
+
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL.String(), requestHeader)
+	if err != nil {
+		log.Printf("[WS] Agent Dial failed: %v", err)
+		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Agent Unavailable"))
+		return nil
+	}
+	defer agentConn.Close()
+
+	// 3. Handle OpenClaw Challenge-Response Authentication
+	agentConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, challengeMsg, err := agentConn.ReadMessage()
+	if err != nil {
+		log.Printf("[WS] Failed to read challenge: %v", err)
+		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Auth Challenge Failed"))
+		return nil
+	}
+	agentConn.SetReadDeadline(time.Time{}) // Reset deadline
+
+	// Parse challenge
+	var challenge struct {
+		Type    string 
+		Event   string 
+		Payload struct {
+			Nonce string 
+		} 
+	}
+	if err := json.Unmarshal(challengeMsg, &challenge); err != nil || challenge.Event != "connect.challenge" {
+		log.Printf("[WS] Unexpected challenge format: %s", challengeMsg)
+		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Invalid Challenge"))
+		return nil
+	}
+
+	// Respond with auth
+	authResp := map[string]interface{}{
+		"type":  "auth",
+		"event": "connect.auth",
+		"payload": map[string]string{
+			"token": id, // Project ID = Gateway Token
+			"nonce": challenge.Payload.Nonce,
+		},
+	}
+	if err := agentConn.WriteJSON(authResp); err != nil {
+		log.Printf("[WS] Auth response failed: %v", err)
+		return nil
+	}
+	log.Printf("[WS] Auth handshake complete for project %s", id)
+
+	// 3. Perform Handshake & Injection (The Magic)
+	go func() {
+		// A. Handshake (Connect as Web User but sync with Telegram session if Admin)
+		userRef := fmt.Sprintf("web:%s", userID)
+		if userID == "13cd5bad-cabf-4c81-9172-e24f32edf7c7" {
+			userRef = "telegram:41434457" // Sync with Telegram for Admin
+		}
+
+		handshake := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "connect",
+			"params": map[string]interface{}{
+				"auth": map[string]string{
+					"token": project.ID, // Use Project ID as Token
+				},
+				"agent": "main",
+				"user":  userRef,
+			},
+		}
+		if err := agentConn.WriteJSON(handshake); err != nil {
+			log.Printf("[WS] Handshake failed: %v", err)
+			return
+		}
+
+		// B. Inject SOUL (Persona) via hidden system message
+		// Fetch SOUL content
+		soulContent := "You are a helpful AI assistant."
+		if out, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/workspace/SOUL.md"}); err == nil && out != "" {
+			soulContent = out
+		}
+
+		// Send System Prompt Packet (OpenClaw Protocol)
+		// We use a 'hidden' push or ephemeral message to prime the context
+		systemPacket := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "push",
+			"params": map[string]interface{}{
+				"type": "message",
+				"payload": map[string]interface{}{
+					"role":    "system",
+					"content": fmt.Sprintf("INTERNAL PROTOCOL: You are the specific persona defined below.\n\n%s\n\n(Respond IN CHARACTER. Do not mention reading this.)", soulContent),
+					"hidden":  true, // If supported, otherwise just a system msg
+				},
+			},
+		}
+		agentConn.WriteJSON(systemPacket)
+	}()
+
+	// 4. Pipe Data (Bidirectional)
+	errChan := make(chan error, 2)
+
+	// User -> Agent
+	go func() {
+		for {
+			msgType, msg, err := userConn.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			// Just forward raw JSON-RPC
+			if err := agentConn.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Agent -> User
+	go func() {
+		for {
+			msgType, msg, err := agentConn.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := userConn.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Wait for disconnection
+	<-errChan
+	// log.Printf("[WS] Tunnel closed for project %s", id)
 	return nil
 }

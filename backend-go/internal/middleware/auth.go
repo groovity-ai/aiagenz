@@ -24,6 +24,11 @@ func Auth(authSvc *service.AuthService) func(next http.Handler) http.Handler {
 				}
 			}
 
+			// Fallback to query parameter (common for WebSockets)
+			if tokenString == "" {
+				tokenString = r.URL.Query().Get("token")
+			}
+
 			// Fallback to cookie if no Authorization header is present.
 			// This is needed for direct browser -> Go API calls (like SSE streaming).
 			if tokenString == "" {

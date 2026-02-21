@@ -203,6 +203,7 @@ func main() {
 		})
 
 		r.Get("/api/projects/{id}/logs", projectHandler.Logs)
+		r.Get("/api/projects/{id}/ws", projectHandler.ChatWS) // WebSocket Chat Tunnel
 		r.Post("/api/projects/{id}/chat/completions", projectHandler.ChatStream)
 		r.Get("/api/projects/{id}/stats", statsHandler.ContainerStats)
 		r.Get("/api/projects/{id}/metrics", statsHandler.GetProjectMetrics)

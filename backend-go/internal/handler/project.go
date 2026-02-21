@@ -152,6 +152,19 @@ func (h *ProjectHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ChatWS handles GET /api/projects/{id}/ws.
+// It upgrades to WebSocket and tunnels to the agent's native gateway.
+func (h *ProjectHandler) ChatWS(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.ProxyGatewayWS(r.Context(), id, userID, w, r); err != nil {
+		// Note: If Upgrade succeeded, we can't write HTTP error anymore.
+		// Errors during handshake are logged in service.
+		Error(w, err)
+	}
+}
+
 // Delete handles DELETE /api/projects/{id}.
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(contextkeys.UserID).(string)
