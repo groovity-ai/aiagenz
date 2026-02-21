@@ -620,10 +620,18 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 		}
 	}
 
-	// 2. Fallback: Local Exec via 'curl' (Robust Path for gVisor/Network Isolation)
+	// 2. Fallback: Local Exec via 'curl' (Robust Path for gVisor/Network Isolation/macOS routing bugs)
 	// If direct HTTP fails (e.g. due to gVisor blocking container-to-container IP or Host Loopback),
 	// we execute 'curl' INSIDE the container to hit its own 127.0.0.1 loopback.
-	log.Printf("[INFO] Bridge HTTP failed (%v), falling back to local exec curl...", lastErr)
+	//
+	// CRITICAL FIX: To prevent DDOSing the container with `docker exec` processes during boot,
+	// we MUST skip this fallback for frequent polling endpoints.
+	if endpoint == "/status" || endpoint == "/health" || endpoint == "/doctor" {
+		log.Printf("[INFO] Bridge HTTP failed (%v). Skipping exec fallback for polling endpoint %s", lastErr, endpoint)
+		return nil, lastErr
+	}
+
+	log.Printf("[INFO] Bridge HTTP failed (%v), falling back to local exec curl for %s...", lastErr, endpoint)
 
 	curlCmd := []string{"curl", "-s", "-X", method}
 	curlCmd = append(curlCmd, "-H", "Content-Type: application/json")
