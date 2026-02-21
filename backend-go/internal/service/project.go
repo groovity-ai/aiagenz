@@ -322,7 +322,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				profileKey := currentConfig.Provider + ":default"
 				profiles[profileKey] = map[string]interface{}{
 					"provider": currentConfig.Provider,
-					"type":     "api_key",
+					"mode":     "api_key",
 					"key":      currentConfig.APIKey, // Bridge sanitizes: writes key to auth-profiles.json, strips from openclaw.json
 				}
 
@@ -867,7 +867,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 			profileKey := dbConfig.Provider + ":default"
 			profiles[profileKey] = map[string]interface{}{
-				"type":     "api_key",
+				"mode":     "api_key",
 				"provider": dbConfig.Provider,
 				"key":      dbConfig.APIKey, // Bridge sanitizes: routes to auth-profiles.json, strips from openclaw.json
 			}
@@ -963,31 +963,8 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 	// 2. Fallback: Direct File Write + Restart (Safer/Faster than Recreate)
 	log.Printf("[WARN] Bridge update failed for %s, falling back to file write + restart: %v", id, err)
 
-	// Prepare config for openclaw.json — re-add SANITIZED profiles
-	if profiles != nil {
-		if configCopy["auth"] == nil {
-			configCopy["auth"] = map[string]interface{}{}
-		}
-		auth := configCopy["auth"].(map[string]interface{})
-
-		sanitized := make(map[string]interface{})
-		for k, vInterface := range profiles {
-			if v, ok := vInterface.(map[string]interface{}); ok {
-				typeVal, _ := v["type"].(string)
-				if typeVal == "" {
-					typeVal, _ = v["mode"].(string) // Fallback for old configs
-					if typeVal == "" {
-						typeVal = "api_key"
-					}
-				}
-				sanitized[k] = map[string]interface{}{
-					"provider": v["provider"],
-					"type":     typeVal,
-				}
-			}
-		}
-		auth["profiles"] = sanitized
-	}
+	// `auth.profiles` was previously extracted and deleted from configCopy
+	// OpenClaw CLI strictly forbids `auth.profiles` from existing in openclaw.json
 	fullConfigJSON, _ := json.MarshalIndent(configCopy, "", "  ")
 
 	// Write openclaw.json

@@ -107,7 +107,6 @@ const handlers = {
                 if (!authStore.profiles) authStore.profiles = {};
                 let authStoreUpdated = false;
 
-                const sanitizedProfiles = {};
                 for (const [k, v] of Object.entries(updates.auth.profiles)) {
                     if (v && typeof v === 'object') {
                         const typeVal = v.type || v.mode || 'api_key';
@@ -116,11 +115,6 @@ const handlers = {
                         authStore.profiles[k] = { ...v, type: typeVal };
                         delete authStore.profiles[k].mode;
                         authStoreUpdated = true;
-
-                        // 2. Prepare sanitized version for openclaw.json
-                        sanitizedProfiles[k] = { ...v, mode: typeVal };
-                        delete sanitizedProfiles[k].type;
-                        delete sanitizedProfiles[k].key;
                     }
                 }
 
@@ -129,8 +123,8 @@ const handlers = {
                     writeJson(AUTH_PROFILES_PATH, authStore);
                 }
 
-                // Replace profiles in updates with sanitized version
-                updates.auth.profiles = sanitizedProfiles;
+                // 2. Strip auth profiles entirely from openclaw.json
+                delete updates.auth.profiles;
             }
 
             const merged = mergeDeep(current, updates);
