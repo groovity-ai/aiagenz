@@ -119,10 +119,10 @@ const handlers = {
 
     'POST:/auth/add': (req, res, body) => {
         try {
-            const { provider, key, mode } = JSON.parse(body);
+            const { provider, key, type, mode } = JSON.parse(body);
             const current = readJson(AUTH_PROFILES_PATH);
             if (!current.profiles) current.profiles = {};
-            current.profiles[`${provider}:default`] = { provider, mode: mode || 'api_key', key };
+            current.profiles[`${provider}:default`] = { provider, type: type || mode || 'api_key', key };
             writeJson(AUTH_PROFILES_PATH, current);
 
             res.json({ ok: true, message: "Auth added" });

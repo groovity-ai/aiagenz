@@ -322,7 +322,7 @@ func (s *ProjectService) Update(ctx context.Context, id, userID string, req *dom
 				profileKey := currentConfig.Provider + ":default"
 				profiles[profileKey] = map[string]interface{}{
 					"provider": currentConfig.Provider,
-					"mode":     "api_key",
+					"type":     "api_key",
 					"key":      currentConfig.APIKey, // Bridge sanitizes: writes key to auth-profiles.json, strips from openclaw.json
 				}
 
@@ -867,7 +867,7 @@ func (s *ProjectService) GetRuntimeConfig(ctx context.Context, id, userID string
 
 			profileKey := dbConfig.Provider + ":default"
 			profiles[profileKey] = map[string]interface{}{
-				"mode":     "api_key",
+				"type":     "api_key",
 				"provider": dbConfig.Provider,
 				"key":      dbConfig.APIKey, // Bridge sanitizes: routes to auth-profiles.json, strips from openclaw.json
 			}
@@ -973,13 +973,16 @@ func (s *ProjectService) UpdateRuntimeConfig(ctx context.Context, id, userID str
 		sanitized := make(map[string]interface{})
 		for k, vInterface := range profiles {
 			if v, ok := vInterface.(map[string]interface{}); ok {
-				mode, _ := v["mode"].(string)
-				if mode == "" {
-					mode = "api_key"
+				typeVal, _ := v["type"].(string)
+				if typeVal == "" {
+					typeVal, _ = v["mode"].(string) // Fallback for old configs
+					if typeVal == "" {
+						typeVal = "api_key"
+					}
 				}
 				sanitized[k] = map[string]interface{}{
 					"provider": v["provider"],
-					"mode":     mode,
+					"type":     typeVal,
 				}
 			}
 		}
@@ -1272,7 +1275,7 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 		profileKey := currentConfig.Provider + ":default"
 		profiles[profileKey] = map[string]interface{}{
 			"provider": currentConfig.Provider,
-			"mode":     "token",
+			"mode":     "api_key",
 			"key":      currentConfig.APIKey,
 		}
 	}
