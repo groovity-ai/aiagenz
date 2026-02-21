@@ -107,14 +107,25 @@ const handlers = {
                 if (!authStore.profiles) authStore.profiles = {};
                 let authStoreUpdated = false;
 
+                const sanitizedProfiles = {};
                 for (const [k, v] of Object.entries(updates.auth.profiles)) {
                     if (v && typeof v === 'object') {
                         const typeVal = v.type || v.mode || 'api_key';
 
-                        // 1. Save secret to auth-profiles.json
+                        // 1. Save secret to auth-profiles.json. Use spread here as it's the raw store.
                         authStore.profiles[k] = { ...v, type: typeVal };
                         delete authStore.profiles[k].mode;
                         authStoreUpdated = true;
+
+                        // 2. Prepare sanitized version for openclaw.json (Strict Allowed Keys Only)
+                        const safeProfile = {
+                            provider: v.provider,
+                            mode: typeVal
+                        };
+                        // Support OAuth profiles which require an email identifier
+                        if (v.email) safeProfile.email = v.email;
+
+                        sanitizedProfiles[k] = safeProfile;
                     }
                 }
 
@@ -123,8 +134,8 @@ const handlers = {
                     writeJson(AUTH_PROFILES_PATH, authStore);
                 }
 
-                // 2. Strip auth profiles entirely from openclaw.json
-                delete updates.auth.profiles;
+                // Replace profiles in updates with sanitized version
+                updates.auth.profiles = sanitizedProfiles;
             }
 
             const merged = mergeDeep(current, updates);
