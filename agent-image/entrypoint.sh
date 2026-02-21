@@ -165,4 +165,4 @@ AGENT_NAME="${OPENCLAW_GATEWAY_NAME:-openclaw}"
 
 echo "🚀 Starting OpenClaw Gateway..."
 # Exec into node process (replace shell)
-exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind auto --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"
+exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind 0.0.0.0 --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"
