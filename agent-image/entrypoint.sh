@@ -109,15 +109,13 @@ fi
 # --- 1.2. Config Auto-Healer (Self-Correction for schema upgrades) ---
 if [ -f "$CONFIG_FILE" ]; then
     echo "🔍 Running fast config auto-healer..."
-    # Legacy configurations might have saved 'auth.profiles' directly into openclaw.json,
-    # which causes strict validation failures in newer OpenClaw versions.
-    # We use native 'jq' to perform a lightning-fast schema check instead of booting the heavy node doctor.
-    if jq -e '.auth.profiles != null' "$CONFIG_FILE" > /dev/null 2>&1; then
-        echo "⚠️ CRITICAL: Found legacy 'auth.profiles' in openclaw.json! OpenClaw gateway would crash."
-        echo "🚑 Auto-healing: Stripping corrupted auth profiles from main config..."
+    # Check if any profile has 'type' (legacy) or 'key' (secret leakage)
+    if jq -e '.auth.profiles | to_entries | any(.value.type or .value.key)' "$CONFIG_FILE" > /dev/null 2>&1; then
+        echo "⚠️  Found legacy/unsecured profiles in openclaw.json. Sanitizing..."
         cp "$CONFIG_FILE" "${CONFIG_FILE}.corrupt.bak"
-        jq 'del(.auth.profiles)' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
-        echo "✅ Auto-heal applied successfully. Corrupted config backed up to ${CONFIG_FILE}.corrupt.bak"
+        # 1. Map type -> mode, 2. Delete key, 3. Delete type
+        jq '.auth.profiles |= map_values(.mode = (.mode // .type // "api_key") | del(.type, .key))' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        echo "✅ Sanitization applied. Secrets moved to backup: ${CONFIG_FILE}.corrupt.bak"
     else
         echo "✅ Config schema is clean."
     fi
@@ -181,5 +179,12 @@ cat /tmp/ttyd.log
 AGENT_NAME="${OPENCLAW_GATEWAY_NAME:-openclaw}"
 
 echo "🚀 Starting OpenClaw Gateway..."
-# Exec into node process (replace shell)
-exec su node -c "NODE_OPTIONS='${NODE_OPTIONS}' node /app/openclaw.mjs gateway --port 18789 --bind 0.0.0.0 --token \"$OPENCLAW_GATEWAY_TOKEN\" --allow-unconfigured"
+# Run as node user using a safer shell execution pattern to avoid token expansion bugs
+su node -s /bin/bash -c "
+  export NODE_OPTIONS='${NODE_OPTIONS}'
+  exec node /app/openclaw.mjs gateway \
+    --port 18789 \
+    --bind 0.0.0.0 \
+    --token '${OPENCLAW_GATEWAY_TOKEN}' \
+    --allow-unconfigured
+"
