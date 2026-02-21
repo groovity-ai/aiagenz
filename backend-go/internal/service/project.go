@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -1576,7 +1577,7 @@ func validateConfigUpdate(config map[string]interface{}) error {
 	return nil
 }
 
-// ProxyChatCompletions streams chat from Next.js to the OpenClaw HTTP API inside Docker.
+// ProxyChatCompletions streams chat from the browser directly to the OpenClaw HTTP API inside Docker.
 func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID string, w http.ResponseWriter, r *http.Request) error {
 	project, err := s.repo.FindByID(ctx, id, userID)
 	if err != nil || project == nil {
@@ -1592,15 +1593,19 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 		return domain.ErrInternal("container is unreachable", err)
 	}
 
+	// Strategy: Always prefer the host-mapped port (127.0.0.1:openClawPort).
+	// The container is always created with portBindings for OpenClaw (127.0.0.1:auto → 18789).
+	// This is reliable on ALL platforms (mac, linux VPS, docker-in-docker).
+	// Fallback to direct container IP only if host-mapped port is not available.
 	var target string
-	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.OpenClawPort != "" {
+	if info.OpenClawPort != "" {
 		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
 	} else if info.IP != "" {
+		// Last resort: try to reach the container via the Docker network bridge.
+		// Only works on Linux where the Docker bridge IP is directly routable from the host.
 		target = fmt.Sprintf("http://%s:18789", info.IP)
-	} else if info.OpenClawPort != "" {
-		target = fmt.Sprintf("http://127.0.0.1:%s", info.OpenClawPort)
 	} else {
-		return domain.ErrInternal("no openclaw API port available", nil)
+		return domain.ErrInternal("no openclaw API port available — try restarting the agent container", nil)
 	}
 
 	targetURL, err := url.Parse(target)
@@ -1612,6 +1617,26 @@ func (s *ProjectService) ProxyChatCompletions(ctx context.Context, id, userID st
 
 	// OpenClaw SSE needs continuous flushing to avoid stuttering
 	proxy.FlushInterval = 50 * time.Millisecond
+
+	// Use a transport with timeouts to avoid hanging connections
+	proxy.Transport = &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+
+	// Custom ErrorHandler returns clean JSON instead of propagating raw HTML error bodies
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusBadGateway)
+		msg := "failed to connect to agent container"
+		if proxyErr != nil {
+			msg = proxyErr.Error()
+		}
+		fmt.Fprintf(rw, `{"error": "chat proxy failed: %s. Is OpenClaw running inside the container?"}`, msg)
+	}
 
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
