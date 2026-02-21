@@ -23,7 +23,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 // ProjectService handles business logic for projects.
 type ProjectService struct {
 	repo      *repository.ProjectRepository
@@ -1784,11 +1783,11 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 
 	// Parse challenge
 	var challenge struct {
-		Type    string 
-		Event   string 
+		Type    string
+		Event   string
 		Payload struct {
-			Nonce string 
-		} 
+			Nonce string
+		}
 	}
 	if err := json.Unmarshal(challengeMsg, &challenge); err != nil || challenge.Event != "connect.challenge" {
 		log.Printf("[WS] Unexpected challenge format: %s", challengeMsg)
@@ -1812,53 +1811,55 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	log.Printf("[WS] Auth handshake complete for project %s", id)
 
 	// 3. Perform Handshake & Injection (The Magic)
-	go func() {
-		// A. Handshake (Connect as Web User but sync with Telegram session if Admin)
-		userRef := fmt.Sprintf("web:%s", userID)
-		if userID == "13cd5bad-cabf-4c81-9172-e24f32edf7c7" {
-			userRef = "telegram:41434457" // Sync with Telegram for Admin
-		}
+	// Execute synchronously before starting proxy loops to prevent concurrent write panics on agentConn.
+	userRef := fmt.Sprintf("web:%s", userID)
+	if userID == "13cd5bad-cabf-4c81-9172-e24f32edf7c7" {
+		userRef = "telegram:41434457" // Sync with Telegram for Admin
+	}
 
-		handshake := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  "connect",
-			"params": map[string]interface{}{
-				"auth": map[string]string{
-					"token": project.ID, // Use Project ID as Token
-				},
-				"agent": "main",
-				"user":  userRef,
+	handshake := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "connect",
+		"params": map[string]interface{}{
+			"auth": map[string]string{
+				"token": project.ID, // Use Project ID as Token
 			},
-		}
-		if err := agentConn.WriteJSON(handshake); err != nil {
-			log.Printf("[WS] Handshake failed: %v", err)
-			return
-		}
+			"agent": "main",
+			"user":  userRef,
+		},
+	}
+	if err := agentConn.WriteJSON(handshake); err != nil {
+		log.Printf("[WS] Handshake failed: %v", err)
+		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Handshake Failed"))
+		return nil
+	}
 
-		// B. Inject SOUL (Persona) via hidden system message
-		// Fetch SOUL content
-		soulContent := "You are a helpful AI assistant."
-		if out, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/workspace/SOUL.md"}); err == nil && out != "" {
-			soulContent = out
-		}
+	// B. Inject SOUL (Persona) via hidden system message
+	// Fetch SOUL content
+	soulContent := "You are a helpful AI assistant."
+	if out, err := s.container.ExecCommand(ctx, *project.ContainerID, []string{"cat", "/home/node/workspace/SOUL.md"}); err == nil && out != "" {
+		soulContent = out
+	}
 
-		// Send System Prompt Packet (OpenClaw Protocol)
-		// We use a 'hidden' push or ephemeral message to prime the context
-		systemPacket := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"method":  "push",
-			"params": map[string]interface{}{
-				"type": "message",
-				"payload": map[string]interface{}{
-					"role":    "system",
-					"content": fmt.Sprintf("INTERNAL PROTOCOL: You are the specific persona defined below.\n\n%s\n\n(Respond IN CHARACTER. Do not mention reading this.)", soulContent),
-					"hidden":  true, // If supported, otherwise just a system msg
-				},
+	// Send System Prompt Packet (OpenClaw Protocol)
+	// We use a 'hidden' push or ephemeral message to prime the context
+	systemPacket := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "push",
+		"params": map[string]interface{}{
+			"type": "message",
+			"payload": map[string]interface{}{
+				"role":    "system",
+				"content": fmt.Sprintf("INTERNAL PROTOCOL: You are the specific persona defined below.\n\n%s\n\n(Respond IN CHARACTER. Do not mention reading this.)", soulContent),
+				"hidden":  true, // If supported, otherwise just a system msg
 			},
-		}
-		agentConn.WriteJSON(systemPacket)
-	}()
+		},
+	}
+
+	if err := agentConn.WriteJSON(systemPacket); err != nil {
+		log.Printf("[WS] System packet failed: %v", err)
+	}
 
 	// 4. Pipe Data (Bidirectional)
 	errChan := make(chan error, 2)
