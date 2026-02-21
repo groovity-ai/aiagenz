@@ -550,16 +550,16 @@ func (s *ProjectService) CallBridge(ctx context.Context, containerID, method, en
 		return nil, fmt.Errorf("no bridge IP or port available")
 	}
 
-	timeout := 15 * time.Second
+	timeout := 2 * time.Second // Fail-fast for GET to prevent UI hanging
 	if endpoint == "/command" {
 		timeout = 60 * time.Second
+	} else if method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" {
+		timeout = 5 * time.Second
 	}
 
-	// Retry config: 3 attempts for non-command endpoints, 1 for /command
-	maxAttempts := 3
-	if endpoint == "/command" {
-		maxAttempts = 1
-	}
+	// Retry config: 1 attempt to fail-fast. If HTTP is dead (e.g. gVisor blocks it),
+	// we want to fall back to 'curl exec' instantly instead of locking up the UI.
+	maxAttempts := 1
 
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
