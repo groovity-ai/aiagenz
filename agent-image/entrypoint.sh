@@ -106,6 +106,22 @@ else
     echo "✅ Config found at $CONFIG_FILE. Skipping generation to preserve user changes."
 fi
 
+# --- 1.2. Config Auto-Healer (Self-Correction for schema upgrades) ---
+if [ -f "$CONFIG_FILE" ]; then
+    echo "🔍 Validating openclaw.json schema..."
+    # Run openclaw doctor silently. If it fails, we have a corrupted schema (like legacy auth profiles)
+    if ! node /app/openclaw.mjs doctor >/dev/null 2>&1; then
+        echo "⚠️ CRITICAL: Config schema is invalid! OpenClaw gateway will crash."
+        echo "🚑 Auto-healing: Stripping potentially corrupted auth profiles..."
+        cp "$CONFIG_FILE" "${CONFIG_FILE}.corrupt.bak"
+        # Safely remove the entire auth.profiles object which is the most common cause of strict schema violations
+        cat "$CONFIG_FILE" | jq 'del(.auth.profiles)' > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        echo "✅ Auto-heal applied successfully. Corrupted config backed up to ${CONFIG_FILE}.corrupt.bak"
+    else
+        echo "✅ Config schema is valid."
+    fi
+fi
+
 # --- 1.5. Auth Profiles Generation (Separate File) ---
 AUTH_PROFILES_DIR="$STATE_DIR/agents/main/agent"
 AUTH_PROFILES_FILE="$AUTH_PROFILES_DIR/auth-profiles.json"
