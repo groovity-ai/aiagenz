@@ -1822,7 +1822,7 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 			"role":   "operator",
 			"scopes": []string{"operator.read", "operator.write"},
 			"auth": map[string]string{
-				"password": id,
+				"token": id,
 			},
 		},
 	}
