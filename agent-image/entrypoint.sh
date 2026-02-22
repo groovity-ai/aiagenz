@@ -20,8 +20,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
         TELEGRAM_ENABLED="true"
     fi
 
-    # Detect OpenClaw version dynamically
-    OPENCLAW_VERSION=$(node /app/openclaw.mjs --version 2>/dev/null || echo "unknown")
+    # Detect OpenClaw version (hardcoded to avoid spawning an expensive V8 process during boot)
+    OPENCLAW_VERSION="latest"
 
     DEFAULT_MODEL="${OPENCLAW_AGENTS_DEFAULTS_MODEL_PRIMARY:-google/gemini-3-flash-preview}"
 
@@ -201,6 +201,9 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 echo "🚀 Starting OpenClaw Gateway..."
+# Apply V8 Memory limits (512MB max heap) to prevent OOM kills on 1GB VPS instances.
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}"
+
 # Reverting to direct su execution without `exec`. If token has spaces, we escape it natively.
 su node -s /bin/bash -c "
   export NODE_OPTIONS='${NODE_OPTIONS}'
