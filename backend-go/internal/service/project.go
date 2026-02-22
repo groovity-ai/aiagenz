@@ -1309,7 +1309,7 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 		profileKey := currentConfig.Provider + ":default"
 		profiles[profileKey] = map[string]interface{}{
 			"provider": currentConfig.Provider,
-			"mode":     "api_key",
+			"type":     "api_key",
 			"key":      currentConfig.APIKey,
 		}
 	}

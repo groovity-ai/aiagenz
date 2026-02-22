@@ -6,10 +6,11 @@ const { execFile } = require('child_process');
 // --- CONFIGURATION ---
 const PORT = 4444;
 
-// Default paths
-let CONFIG_PATH = '/home/node/.openclaw/openclaw.json';
-let AUTH_PROFILES_PATH = '/home/node/.openclaw/agents/main/agent/auth-profiles.json';
-let WORKSPACE_PATH = '/home/node/.openclaw';
+// Default paths — anchored to OpenClaw STATE_DIR (same as entrypoint.sh)
+const STATE_DIR = process.env.OPENCLAW_STATE_DIR || path.join(process.env.HOME || '/home/node', '.openclaw');
+let CONFIG_PATH = path.join(STATE_DIR, 'openclaw.json');
+let AUTH_PROFILES_PATH = path.join(STATE_DIR, 'agents/main/agent/auth-profiles.json');
+let WORKSPACE_PATH = STATE_DIR;
 
 // --- PLUGIN STATE ---
 const state = {
@@ -81,17 +82,71 @@ const handlers = {
     'GET:/config': (req, res) => {
         const config = readJson(CONFIG_PATH);
         const auth = readJson(AUTH_PROFILES_PATH);
+
+        // Merge: openclaw.json has metadata (provider, mode), auth-profiles.json has credentials (key)
+        // For display, merge keys from auth-profiles.json INTO config.auth.profiles
         if (auth.profiles) {
             if (!config.auth) config.auth = {};
-            config.auth.profiles = auth.profiles;
+            if (!config.auth.profiles) config.auth.profiles = {};
+            for (const [k, v] of Object.entries(auth.profiles)) {
+                if (!config.auth.profiles[k]) {
+                    // Profile only in auth-profiles.json — add metadata to config
+                    config.auth.profiles[k] = { provider: v.provider, mode: v.type || v.mode || 'api_key' };
+                }
+                // Merge key for display (frontend reads this)
+                if (v.key) {
+                    config.auth.profiles[k].key = v.key;
+                }
+            }
         }
         res.json(config);
     },
+
 
     'POST:/config/update': (req, res, body) => {
         try {
             const current = readJson(CONFIG_PATH);
             const updates = JSON.parse(body);
+            console.log('[bridge] Config Update Received. Keys:', Object.keys(updates));
+            if (updates.auth?.profiles) {
+                console.log('[bridge] Auth Profiles Update:', Object.keys(updates.auth.profiles));
+            }
+
+            // SPLIT & SANITIZE: auth.profiles with keys go to auth-profiles.json ONLY
+            // openclaw.json gets SANITIZED profiles (provider + mode, NO keys)
+            if (updates.auth && updates.auth.profiles) {
+                const profiles = updates.auth.profiles;
+                const currentAuth = readJson(AUTH_PROFILES_PATH);
+                if (!currentAuth.profiles) currentAuth.profiles = {};
+                if (!currentAuth.version) currentAuth.version = 1;
+
+                // Write full profiles (with key) to auth-profiles.json
+                for (const [k, v] of Object.entries(profiles)) {
+                    if (v && typeof v === 'object') {
+                        const existingKey = currentAuth.profiles[k]?.key;
+                        const newKey = v.key || existingKey; // Retain existing key if none provided
+
+                        currentAuth.profiles[k] = {
+                            type: v.type || v.mode || 'api_key',  // auth-profiles uses 'type'
+                            provider: v.provider,
+                            ...(newKey ? { key: newKey } : {}),
+                        };
+                    }
+                }
+                writeJson(AUTH_PROFILES_PATH, currentAuth);
+                console.log('[bridge] Wrote auth profiles to auth-profiles.json');
+
+                // SANITIZE: strip keys before writing to openclaw.json
+                const sanitized = {};
+                for (const [k, v] of Object.entries(profiles)) {
+                    if (v && typeof v === 'object') {
+                        let mode = v.mode || v.type || 'api_key'; // Default to api_key for LLM providers
+                        sanitized[k] = { provider: v.provider, mode };
+                    }
+                }
+                updates.auth.profiles = sanitized;
+            }
+
 
             // Normalize token
             if (updates.channels?.telegram?.accounts?.default?.token) {
@@ -101,53 +156,33 @@ const handlers = {
                 delete updates.channels.telegram.accounts.default.token;
             }
 
-            // Handle auth profiles: route secrets to auth-profiles.json and sanitize for openclaw.json
-            if (updates.auth && updates.auth.profiles) {
-                const authStore = readJson(AUTH_PROFILES_PATH);
-                if (!authStore.profiles) authStore.profiles = {};
-                let authStoreUpdated = false;
+            const merged = mergeDeep(current, updates);
 
-                const sanitizedProfiles = {};
-                for (const [k, v] of Object.entries(updates.auth.profiles)) {
-                    if (v && typeof v === 'object') {
-                        const typeVal = v.type || v.mode || 'api_key';
-
-                        // 1. Save secret to auth-profiles.json. Use spread here as it's the raw store.
-                        authStore.profiles[k] = { ...v, type: typeVal };
-                        delete authStore.profiles[k].mode;
-                        authStoreUpdated = true;
-
-                        // 2. Prepare sanitized version for openclaw.json (Strict Allowed Keys Only)
-                        const safeProfile = {
-                            provider: v.provider,
-                            mode: typeVal
-                        };
-                        // Support OAuth profiles which require an email identifier
-                        if (v.email) safeProfile.email = v.email;
-
-                        sanitizedProfiles[k] = safeProfile;
-                    }
-                }
-
-                if (authStoreUpdated) {
-                    authStore.version = 1;
-                    writeJson(AUTH_PROFILES_PATH, authStore);
-                }
-
-                // Replace profiles in updates with sanitized version
-                updates.auth.profiles = sanitizedProfiles;
+            // SECURITY/SCHEMA FIX: Do not deep-merge auth.profiles, as it preserves old invalid keys (like 'type: api_key')
+            // Force overwrite with the strictly sanitized profiles payload.
+            if (updates.auth?.profiles) {
+                if (!merged.auth) merged.auth = {};
+                merged.auth.profiles = updates.auth.profiles;
             }
 
-            const merged = mergeDeep(current, updates);
             writeJson(CONFIG_PATH, merged);
 
             res.json({ ok: true, message: "Config updated" });
 
-            // Graceful reload
-            if (req.headers['x-reload'] === 'true') {
-                setTimeout(() => {
-                    try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
-                }, 500);
+            // Reload Strategy
+            const strategy = req.headers['x-strategy'] || 'restart';
+
+            if (strategy === 'restart') {
+                if (req.headers['x-reload'] === 'true') {
+                    console.log('[bridge] Strategy: Restarting process...');
+                    setTimeout(() => {
+                        try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
+                    }, 500);
+                }
+            } else if (strategy === 'hot-reload') {
+                console.log('[bridge] Strategy: Hot Reload (File written, skipping restart)');
+                // Ideally, trigger OpenClaw internal reload here if API exists
+                // if (state.api?.config?.reload) state.api.config.reload();
             }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -156,17 +191,40 @@ const handlers = {
 
     'POST:/auth/add': (req, res, body) => {
         try {
-            const { provider, key, type, mode } = JSON.parse(body);
-            const current = readJson(AUTH_PROFILES_PATH);
-            if (!current.profiles) current.profiles = {};
-            current.profiles[`${provider}:default`] = { provider, type: type || mode || 'api_key', key };
-            writeJson(AUTH_PROFILES_PATH, current);
+            const { provider, key, mode } = JSON.parse(body);
+            const profileKey = `${provider}:default`;
 
-            res.json({ ok: true, message: "Auth added" });
+            // 1. Write key to auth-profiles.json ONLY (OpenClaw reads keys from here)
+            const currentAuth = readJson(AUTH_PROFILES_PATH);
+            if (!currentAuth.version) currentAuth.version = 1;
+            if (!currentAuth.profiles) currentAuth.profiles = {};
+            currentAuth.profiles[profileKey] = {
+                type: mode || 'api_key',   // auth-profiles.json uses 'type' not 'mode'
+                provider,
+                key,
+            };
+            writeJson(AUTH_PROFILES_PATH, currentAuth);
+            console.log(`[bridge] POST /auth/add: wrote key for ${profileKey} to auth-profiles.json`);
 
-            setTimeout(() => {
-                try { process.kill(process.ppid, 'SIGHUP'); } catch (e) { process.exit(0); }
-            }, 500);
+            // 2. Update openclaw.json with METADATA ONLY (no key!)
+            const config = readJson(CONFIG_PATH);
+            if (!config.auth) config.auth = {};
+            if (!config.auth.profiles) config.auth.profiles = {};
+
+            let ocMode = mode || 'token';
+            if (ocMode === 'api_key') ocMode = 'token';
+
+            config.auth.profiles[profileKey] = {
+                provider,
+                mode: ocMode,   // openclaw.json uses 'mode: token' or 'mode: oauth'
+            };
+            // Ensure auth.order includes this provider
+            if (!config.auth.order) config.auth.order = {};
+            config.auth.order[provider] = [profileKey];
+            writeJson(CONFIG_PATH, config);
+            console.log(`[bridge] POST /auth/add: wrote metadata for ${profileKey} to openclaw.json`);
+
+            res.json({ ok: true, message: 'Auth added' });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -176,11 +234,22 @@ const handlers = {
         try {
             const { args } = JSON.parse(body);
             execFile('openclaw', args, { env: process.env, timeout: 30000 }, (error, stdout, stderr) => {
-                if (error) {
+                let data = stdout;
+                let isJson = false;
+                try {
+                    // Try to parse JSON output
+                    if (stdout && stdout.trim()) {
+                        data = JSON.parse(stdout);
+                        isJson = true;
+                    }
+                } catch (e) { }
+
+                // If error (exit code != 0) AND we didn't get valid JSON, then it's a real failure
+                if (error && !isJson) {
                     res.status(500).json({ ok: false, error: error.message, stdout, stderr });
                 } else {
-                    let data = stdout;
-                    try { data = JSON.parse(stdout); } catch (e) { }
+                    // If we got JSON, treat as success (ok: true) even if exit code was 1 (e.g. doctor found issues)
+                    // Or if no error, return text output
                     res.json({ ok: true, data, stderr });
                 }
             });
@@ -194,16 +263,43 @@ const handlers = {
             const { provider } = JSON.parse(body);
             if (!provider) return res.status(400).json({ ok: false, error: 'provider required' });
 
-            execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
-                { env: process.env, timeout: 15000 },
-                (error, stdout, stderr) => {
-                    if (error) {
-                        res.status(500).json({ ok: false, error: error.message, stdout, stderr });
-                    } else {
-                        res.json({ ok: true, data: stdout.trim() });
+            // OAuth providers require their auth plugin to be enabled first.
+            // Map provider name -> plugin name (only for OAuth-based providers).
+            const OAUTH_PLUGIN_MAP = {
+                'google-antigravity': 'google-antigravity-auth',
+                'google-gemini-cli': 'google-gemini-cli-auth',
+                'openai-codex': 'openai-codex-auth',
+                'qwen-portal': 'qwen-portal-auth',
+            };
+
+            const pluginName = OAUTH_PLUGIN_MAP[provider];
+            const runLogin = () => {
+                execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
+                    { env: process.env, timeout: 15000 },
+                    (error, stdout, stderr) => {
+                        if (error) {
+                            res.status(500).json({ ok: false, error: error.message, stdout, stderr });
+                        } else {
+                            res.json({ ok: true, data: stdout.trim() });
+                        }
                     }
-                }
-            );
+                );
+            };
+
+            if (pluginName) {
+                // Auto-enable the auth plugin before starting login
+                console.log(`[bridge] Auto-enabling plugin: ${pluginName}`);
+                execFile('openclaw', ['plugins', 'enable', pluginName],
+                    { env: process.env, timeout: 10000 },
+                    (err, out, serr) => {
+                        if (err) console.log(`[bridge] Plugin enable warning: ${err.message}`);
+                        else console.log(`[bridge] Plugin ${pluginName} enabled: ${out.trim()}`);
+                        runLogin();
+                    }
+                );
+            } else {
+                runLogin();
+            }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -215,7 +311,7 @@ const handlers = {
             if (!provider || !callbackUrl) return res.status(400).json({ ok: false, error: 'provider and callbackUrl required' });
 
             const child = require('child_process').spawn('openclaw',
-                ['models', 'auth', 'login', '--provider', provider, '--no-browser'],
+                ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
                 { env: process.env, timeout: 15000 }
             );
 
@@ -300,12 +396,19 @@ module.exports = {
     },
 
     async activate(context) {
+        // NOTE: We intentionally do NOT update AUTH_PROFILES_PATH from context.workspacePath.
+        // context.workspacePath is the AGENT workspace (e.g. /home/node/workspace),
+        // NOT the state dir where auth-profiles.json lives.
+        // Paths are already set correctly at module-load time from STATE_DIR env var.
         if (context?.workspacePath) {
             WORKSPACE_PATH = context.workspacePath;
-            CONFIG_PATH = path.join(WORKSPACE_PATH, 'openclaw.json');
-            AUTH_PROFILES_PATH = path.join(WORKSPACE_PATH, 'agents', 'main', 'agent', 'auth-profiles.json');
+            // Only update CONFIG_PATH if it's inside STATE_DIR (safeguard)
+            const stateBasedConfig = path.join(STATE_DIR, 'openclaw.json');
+            if (fs.existsSync(stateBasedConfig)) {
+                CONFIG_PATH = stateBasedConfig; // Re-affirm correct path
+            }
         }
-        console.log('[aiagenz-bridge] Activated (Context Loaded)');
+        console.log(`[aiagenz-bridge] Activated. STATE_DIR=${STATE_DIR} CONFIG_PATH=${CONFIG_PATH} AUTH_PROFILES_PATH=${AUTH_PROFILES_PATH}`);
         // Server already started in register()
     },
 
