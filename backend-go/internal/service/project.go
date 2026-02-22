@@ -1340,6 +1340,8 @@ func (s *ProjectService) buildEnvVars(projectID string, projectName string, req 
 		"OPENCLAW_AGENT_NAME=" + projectName,
 		"OPENCLAW_DOCTOR=false",
 		"OPENCLAW_SKIP_DOCTOR=true",
+		// Break-Glass: natively bypass ECC Device Signatures for the spoofed Control UI
+		"OPENCLAW_GATEWAY_CONTROLUI_DANGEROUSLYDISABLEDEVICEAUTH=true",
 	}
 	if req != nil && req.TelegramToken != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_CHANNELS_TELEGRAM_ACCOUNTS_DEFAULT_BOTTOKEN=%s", req.TelegramToken))
@@ -1570,13 +1572,6 @@ func (s *ProjectService) postStartSetup(ctx context.Context, containerID, contai
 			_ = s.container.ExecAsRoot(ctx, containerID, []string{"chown", "-R", "node:node", authPath})
 		}
 	}
-
-	// 3.5 Break-Glass Disable Device Identity Check
-	// The OpenClaw Gateway usually requires an ECC Public Key pair and device signature
-	// to grant operator.write access. Since the Go Proxy only forwards JSON and doesn't encrypt,
-	// we use the 'dangerouslyDisableDeviceAuth' hack to natively bypass device signature checks.
-	// This only works because we are falling back to 'password' mode via environment variables.
-	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"})
 
 	// 4. Wait for Bridge readiness (polls /status, max 90s for slow startups)
 	s.waitForBridge(ctx, containerID, containerName, 90*time.Second)
