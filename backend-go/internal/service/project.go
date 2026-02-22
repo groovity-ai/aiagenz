@@ -1293,6 +1293,23 @@ func (s *ProjectService) reprovisionContainer(ctx context.Context, project *doma
 		return domain.ErrInternal("failed to recreate container", err)
 	}
 
+	// 4.5 Inject openclaw.json with Break-Glass Bypass BEFORE starting
+	// This prevents the hot-reload race conditions that occur when modifying config via EXEC at runtime.
+	bypassConfig := map[string]interface{}{
+		"gateway": map[string]interface{}{
+			"controlUi": map[string]interface{}{
+				"dangerouslyDisableDeviceAuth": true,
+				"allowInsecureAuth":            true, // Satisfies "checkBrowserOrigin secure context"
+			},
+		},
+	}
+	// Preserve existing channels if any
+	if currentConfig.Channels != nil {
+		bypassConfig["channels"] = currentConfig.Channels
+	}
+	bypassConfigBytes, _ := json.MarshalIndent(bypassConfig, "", "  ")
+	_ = s.container.CopyToContainer(ctx, containerID, "/home/node/.openclaw/openclaw.json", bypassConfigBytes)
+
 	// 5. Start Container
 	if err := s.container.Start(ctx, containerID); err != nil {
 		return domain.ErrInternal("failed to start new container", err)
