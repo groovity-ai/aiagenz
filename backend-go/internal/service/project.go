@@ -1792,6 +1792,7 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	requestHeader.Add("X-OpenClaw-Token", id)
 	requestHeader.Add("X-Forwarded-User", "admin")      // Fallback for trusted-proxy mode
 	requestHeader.Add("User-Agent", "OpenClaw CLI/1.0") // Bypass Go-http-client blocks
+	requestHeader.Add("Sec-WebSocket-Protocol", "openclaw, "+id)
 
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL.String(), requestHeader)
 	if err != nil {
