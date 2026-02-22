@@ -1578,6 +1578,7 @@ func (s *ProjectService) postStartSetup(ctx context.Context, containerID, contai
 	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.trustedProxies", `["0.0.0.0/0"]`})
 	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.auth.mode", "trusted-proxy"})
 	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.auth.trustedProxy.userHeader", "x-openclaw-user"})
+	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"})
 
 	// 4. Wait for Bridge readiness (polls /status, max 90s for slow startups)
 	s.waitForBridge(ctx, containerID, containerName, 90*time.Second)

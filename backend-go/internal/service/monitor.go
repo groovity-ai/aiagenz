@@ -13,9 +13,9 @@ import (
 type MonitorService struct {
 	db        *pgxpool.Pool
 	container *ContainerService
-	
+
 	// Cache for CPU calculation
-	mu          sync.Mutex
+	mu           sync.Mutex
 	lastCPUStats map[string]cpuStat
 }
 
@@ -90,9 +90,9 @@ func (s *MonitorService) collectMetrics(ctx context.Context) {
 		cpuRaw, _ := stats["cpu_stats"].(map[string]interface{})
 		cpuUsage := getNestedFloat(cpuRaw, "cpu_usage", "total_usage")
 		systemUsage := getNestedFloat(cpuRaw, "system_cpu_usage")
-		
+
 		cpuPercent := 0.0
-		
+
 		s.mu.Lock()
 		lastStat, exists := s.lastCPUStats[p.ContainerID]
 		s.lastCPUStats[p.ContainerID] = cpuStat{
@@ -105,7 +105,7 @@ func (s *MonitorService) collectMetrics(ctx context.Context) {
 		if exists && systemUsage > lastStat.SystemUsage {
 			cpuDelta := cpuUsage - lastStat.TotalUsage
 			systemDelta := systemUsage - lastStat.SystemUsage
-			
+
 			// Get online CPUs count if available, default to 1
 			onlineCPUs := 1.0
 			v := getNestedFloat(cpuRaw, "online_cpus")
