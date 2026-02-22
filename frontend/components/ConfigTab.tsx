@@ -48,7 +48,7 @@ interface Agent {
 interface OpenClawConfig {
     agents?: {
         list?: Agent[]
-        defaults?: { model?: { primary?: string } }
+        defaults?: { model?: { primary?: string, fallback?: string[] } }
         models?: Record<string, { alias?: string }>
     }
     auth?: {
@@ -562,6 +562,7 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
 
     // Default model state
     const [defaultModel, setDefaultModel] = useState(config.agents?.defaults?.model?.primary || "")
+    const [fallbackModels, setFallbackModels] = useState<string[]>(config.agents?.defaults?.model?.fallback || [])
     const [savingDefault, setSavingDefault] = useState(false)
 
     // Provider management state
@@ -595,6 +596,7 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
 
     useEffect(() => {
         setDefaultModel(config.agents?.defaults?.model?.primary || "")
+        setFallbackModels(Array.isArray(config.agents?.defaults?.model?.fallback) ? config.agents?.defaults?.model?.fallback : [])
     }, [config])
 
     const handleSaveDefault = async () => {
@@ -608,6 +610,7 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
             if (!newConfig.agents.defaults.model) newConfig.agents.defaults.model = {}
 
             newConfig.agents.defaults.model.primary = defaultModel
+            newConfig.agents.defaults.model.fallback = fallbackModels
 
             await apiFetch(`/api/projects/${projectId}/config`, {
                 method: 'PUT',
@@ -788,11 +791,43 @@ function LLMEditor({ config, projectId, availableModels, onUpdate }: {
                                 ))
                             )}
                         </select>
-                        <Button onClick={handleSaveDefault} disabled={savingDefault || defaultModel === (config.agents?.defaults?.model?.primary || "")}>
+                        <Button onClick={handleSaveDefault} disabled={savingDefault}>
                             {savingDefault ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                             Save
                         </Button>
                     </div>
+
+                    <div className="mt-4 border-t pt-4">
+                        <Label className="mb-2 block">Fallback Models</Label>
+                        <p className="text-xs text-muted-foreground mb-3">Select secondary models to try automatically if the primary model fails or is rate-limited.</p>
+
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            {fallbackModels.map((fb, idx) => (
+                                <Badge key={idx} variant="secondary" className="flex items-center gap-1 font-mono text-xs">
+                                    {fb}
+                                    <X className="h-3 w-3 cursor-pointer hover:text-red-500" onClick={() => setFallbackModels(prev => prev.filter((_, i) => i !== idx))} />
+                                </Badge>
+                            ))}
+                        </div>
+
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            value=""
+                            onChange={(e) => {
+                                if (e.target.value && !fallbackModels.includes(e.target.value)) {
+                                    setFallbackModels([...fallbackModels, e.target.value])
+                                }
+                            }}
+                        >
+                            <option value="">Add a fallback model...</option>
+                            {modelOptions.map(m => (
+                                <option key={m.id || m.key} value={m.id || m.key}>
+                                    {m.id || m.key} {m.provider ? `(${m.provider})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     {modelOptions.length === 0 && (
                         <p className="text-[11px] text-muted-foreground mt-2">
                             Tip: Connect a provider below to see available models.

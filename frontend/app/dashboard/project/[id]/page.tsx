@@ -14,8 +14,10 @@ import { SkillsTab } from "@/components/SkillsTab"
 import { AutomationTab } from "@/components/AutomationTab"
 import { OverviewTab } from "@/components/OverviewTab"
 import { AdvancedConfigTab } from "@/components/AdvancedConfigTab"
+import { SessionsTab } from "@/components/SessionsTab"
+import { UsageTab } from "@/components/UsageTab"
 import AgentChatPanel from "@/components/AgentChatPanel"
-import { MessageCircle } from "lucide-react"
+import { MessageCircle, Database, Zap } from "lucide-react"
 
 interface Project {
     id: string
@@ -168,6 +170,8 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                             <TabsTrigger value="skills" className="gap-2"><Box className="h-4 w-4" /> Skills</TabsTrigger>
                             <TabsTrigger value="automation" className="gap-2"><Clock className="h-4 w-4" /> Automation</TabsTrigger>
                             <TabsTrigger value="advanced" className="gap-2"><FileJson className="h-4 w-4" /> Advanced</TabsTrigger>
+                            <TabsTrigger value="sessions" className="gap-2"><Database className="h-4 w-4" /> Sessions</TabsTrigger>
+                            <TabsTrigger value="usage" className="gap-2"><Zap className="h-4 w-4" /> Usage</TabsTrigger>
                             <TabsTrigger value="console" className="gap-2"><Terminal className="h-4 w-4" /> Console</TabsTrigger>
                             <TabsTrigger value="webterm" className="gap-2"><Terminal className="h-4 w-4" /> WebTerm</TabsTrigger>
                         </TabsList>
@@ -191,6 +195,14 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
 
                     <TabsContent value="advanced" className="flex-1">
                         <AdvancedConfigTab projectId={id} />
+                    </TabsContent>
+
+                    <TabsContent value="sessions" className="flex-1">
+                        <SessionsTab projectId={id} />
+                    </TabsContent>
+
+                    <TabsContent value="usage" className="flex-1">
+                        <UsageTab projectId={id} />
                     </TabsContent>
 
                     <TabsContent value="console" className="flex-1 h-[600px]">

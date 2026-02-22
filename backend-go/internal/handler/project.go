@@ -360,9 +360,89 @@ func (h *ProjectHandler) GetAgentsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSessionsList handles GET /projects/{id}/sessions
-// TODO: Re-enable when Bridge-based session listing is stable (disabled to prevent overload)
+// Proxies to Bridge GET /sessions
 func (h *ProjectHandler) GetSessionsList(w http.ResponseWriter, r *http.Request) {
-	JSON(w, http.StatusOK, map[string]interface{}{"sessions": []interface{}{}})
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+
+	project, err := h.svc.GetByID(r.Context(), id, userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if project.ContainerID == nil || project.Status != "running" {
+		JSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": []interface{}{}})
+		return
+	}
+
+	resp, err := h.svc.CallBridge(r.Context(), *project.ContainerID, "GET", "/sessions", nil, nil)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	// The bridge returns { "ok": true, "data": [...] }. Write it out directly.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
+}
+
+// GetSessionHistory handles GET /projects/{id}/sessions/{sid}/history
+// Proxies to Bridge GET /sessions/:id/history
+func (h *ProjectHandler) GetSessionHistory(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	sid := chi.URLParam(r, "sid")
+
+	project, err := h.svc.GetByID(r.Context(), id, userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if project.ContainerID == nil || project.Status != "running" {
+		Error(w, domain.ErrBadRequest("agent container is not running"))
+		return
+	}
+
+	endpoint := fmt.Sprintf("/sessions/%s/history", sid)
+	resp, err := h.svc.CallBridge(r.Context(), *project.ContainerID, "GET", endpoint, nil, nil)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
+}
+
+// DeleteSession handles DELETE /projects/{id}/sessions/{sid}
+// Proxies to Bridge DELETE /sessions/:id
+func (h *ProjectHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(contextkeys.UserID).(string)
+	id := chi.URLParam(r, "id")
+	sid := chi.URLParam(r, "sid")
+
+	project, err := h.svc.GetByID(r.Context(), id, userID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if project.ContainerID == nil || project.Status != "running" {
+		Error(w, domain.ErrBadRequest("agent container is not running"))
+		return
+	}
+
+	endpoint := fmt.Sprintf("/sessions/%s", sid)
+	resp, err := h.svc.CallBridge(r.Context(), *project.ContainerID, "DELETE", endpoint, nil, nil)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
 }
 
 // GetChannels handles GET /projects/{id}/channels

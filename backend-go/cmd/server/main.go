@@ -164,6 +164,8 @@ func main() {
 			r.Get("/api/projects/{id}/agent-status", projectHandler.GetAgentStatus)
 			r.Get("/api/projects/{id}/agents", projectHandler.GetAgentsList)
 			r.Get("/api/projects/{id}/sessions", projectHandler.GetSessionsList)
+			r.Get("/api/projects/{id}/sessions/{sid}/history", projectHandler.GetSessionHistory)
+			r.Delete("/api/projects/{id}/sessions/{sid}", projectHandler.DeleteSession)
 			r.Post("/api/projects/{id}/auth/add", projectHandler.AuthAdd)
 			r.Post("/api/projects/{id}/auth/login", projectHandler.AuthLogin)
 			r.Post("/api/projects/{id}/auth/callback", projectHandler.AuthCallback)
