@@ -1810,7 +1810,7 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 		"id":     "init-1",
 		"method": "connect",
 		"params": map[string]interface{}{
-			"minProtocol": 2,
+			"minProtocol": 3,
 			"maxProtocol": 3,
 			"client": map[string]interface{}{
 				"id":          "cli",
@@ -1818,6 +1818,10 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 				"version":     "1.0.0",
 				"platform":    "node",
 				"mode":        "cli",
+			},
+			"role": "operator",
+			"auth": map[string]string{
+				"token": id,
 			},
 		},
 	}
