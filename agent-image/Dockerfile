@@ -1,10 +1,11 @@
-# Base on official OpenClaw starter
-FROM openclaw-starter:latest
+# Base directly on official OpenClaw image to avoid double wrapping
+FROM ghcr.io/openclaw/openclaw:latest
 
 USER root
 
 # Install additional tools for Agents
 RUN apt-get update && apt-get install -y \
+    bash \
     curl \
     wget \
     git \
@@ -13,6 +14,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Set working directory (same as what openclaw-starter did)
+WORKDIR /app
 
 # Install ttyd manually (apt package missing in some base images)
 RUN ARCH=$(uname -m) && \

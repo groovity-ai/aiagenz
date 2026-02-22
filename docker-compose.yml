@@ -60,6 +60,7 @@ services:
 
   # ─── Custom Agent Image Builder ────────────────────────────
   agent-image:
+    profiles: [ "manual" ]
     build:
       context: .
       dockerfile: agent-image/Dockerfile
