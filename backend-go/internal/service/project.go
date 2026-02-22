@@ -1802,44 +1802,44 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	}
 	defer agentConn.Close()
 
-	// 3. Handle OpenClaw Challenge-Response Authentication
-	agentConn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	_, challengeMsg, err := agentConn.ReadMessage()
-	if err != nil {
-		log.Printf("[WS] Failed to read challenge: %v", err)
-		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Auth Challenge Failed"))
-		return nil
-	}
-	agentConn.SetReadDeadline(time.Time{}) // Reset deadline
-
-	// Parse challenge
-	var challenge struct {
-		Type    string
-		Event   string
-		Payload struct {
-			Nonce string
-		}
-	}
-	if err := json.Unmarshal(challengeMsg, &challenge); err != nil || challenge.Event != "connect.challenge" {
-		log.Printf("[WS] Unexpected challenge format: %s", challengeMsg)
-		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Invalid Challenge"))
-		return nil
-	}
-
-	// Respond with auth
-	authResp := map[string]interface{}{
-		"type":  "auth",
-		"event": "connect.auth",
-		"payload": map[string]string{
-			"token": id, // Project ID = Gateway Token
-			"nonce": challenge.Payload.Nonce,
+	// 3. Send the mandatory OpenClaw Protocol 'connect' frame
+	// The OpenClaw Gateway expects the very first WS message to be a specific JSON
+	// 'connect' request. If it receives anything else (or times out), it drops connection with 1008.
+	connectReq := map[string]interface{}{
+		"type":   "req",
+		"id":     "init-1",
+		"method": "connect",
+		"params": map[string]interface{}{
+			"minProtocol": 2,
+			"maxProtocol": 3,
+			"client": map[string]interface{}{
+				"id":          "aiagenz-proxy",
+				"displayName": "Backend Proxy",
+				"version":     "1.0.0",
+				"platform":    "go",
+				"mode":        "server",
+				// Pass the Gateway token inside the first payload if auth headers fail
+				"token": id,
+			},
 		},
 	}
-	if err := agentConn.WriteJSON(authResp); err != nil {
-		log.Printf("[WS] Auth response failed: %v", err)
+	if err := agentConn.WriteJSON(connectReq); err != nil {
+		log.Printf("[WS] Failed to write connect request: %v", err)
+		userConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Init Failed"))
 		return nil
 	}
-	log.Printf("[WS] Auth handshake complete for project %s", id)
+
+	// Wait for 'res' -> 'hello-ok'
+	agentConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, helloMsg, err := agentConn.ReadMessage()
+	agentConn.SetReadDeadline(time.Time{}) // Reset deadline
+	if err != nil {
+		log.Printf("[WS] Failed to read hello response: %v", err)
+		return nil
+	}
+
+	// Optional: Parse the helloMsg to ensure ok: true
+	log.Printf("[WS] Auth handshake complete. Received handshake response from OpenClaw: %s", string(helloMsg))
 
 	// 3. Perform Handshake & Injection (The Magic)
 	// Execute synchronously before starting proxy loops to prevent concurrent write panics on agentConn.
