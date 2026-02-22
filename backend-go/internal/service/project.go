@@ -1789,6 +1789,8 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	// WebSocket server will treat it as a cross-origin browser request and reject
 	// it with '1008 Policy Violation'. Omitting it treats this as a server-to-server call.
 	requestHeader.Add("Authorization", "Bearer "+id)
+	requestHeader.Add("X-OpenClaw-Token", id)
+	requestHeader.Add("X-Forwarded-User", "admin") // Fallback for trusted-proxy mode
 
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL.String(), requestHeader)
 	if err != nil {
