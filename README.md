@@ -65,8 +65,11 @@ When OpenClaw releases a new version or if you update `agent-image/entrypoint.sh
 ```bash
 cd ~/aiagenz
 
-# Rebuild the local agent-image (using the manual profile)
+# Option A: Rebuild local changes only (faster, uses cached base image)
 docker compose --profile manual build agent-image
+
+# Option B: Pull the latest OpenClaw base engine AND rebuild
+docker compose --profile manual build --pull agent-image
 ```
 *Effect: New projects will use the new engine. Existing projects need Restart.*
 
