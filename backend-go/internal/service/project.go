@@ -1781,12 +1781,11 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	defer userConn.Close()
 
 	// 2. Connect to Agent Gateway using OpenClaw Challenge-Response Auth Protocol
-	// 1. Connect without token
-	// 2. Server sends connect.challenge with nonce
-	// 3. We respond with connect.auth {token, nonce}
-	agentURL := url.URL{Scheme: "ws", Host: targetHost, Path: "/"}
+	// Recent OpenClaw versions also strictly validate the token during HTTP Upgrade.
+	agentURL := url.URL{Scheme: "ws", Host: targetHost, Path: "/", RawQuery: "token=" + id}
 	requestHeader := http.Header{}
 	requestHeader.Add("Origin", fmt.Sprintf("http://%s", targetHost))
+	requestHeader.Add("Authorization", "Bearer "+id)
 
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL.String(), requestHeader)
 	if err != nil {
