@@ -169,6 +169,7 @@ export default function AgentChatPanel({
             method: "chat.send",
             params: {
                 message: text,
+                sessionKey: `web-${projectId}`,
                 idempotencyKey: frameId // Required for side-effecting methods
             }
         }
