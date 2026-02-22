@@ -174,6 +174,7 @@ echo "⚙️  Optimizing OpenClaw CLI for low-memory environments..."
 cat << EOF > /usr/local/bin/openclaw
 #!/bin/bash
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=256}"
+export NODE_PATH="/app/node_modules"
 exec node /app/openclaw.mjs "\$@"
 EOF
 chmod +x /usr/local/bin/openclaw
@@ -211,6 +212,7 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}"
 # Reverting to direct su execution without `exec`. If token has spaces, we escape it natively.
 su node -s /bin/bash -c "
   export NODE_OPTIONS='${NODE_OPTIONS}'
+  export NODE_PATH='/app/node_modules'
   node /app/openclaw.mjs gateway \
     --port 18789 \
     --bind lan \

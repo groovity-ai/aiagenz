@@ -2,13 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-let pty;
-try {
-    pty = require('@lydell/node-pty');
-} catch (e) {
-    // Fallback for Docker container where OpenClaw dependencies are at /app/node_modules
-    pty = require('/app/node_modules/@lydell/node-pty');
-}
+const pty = require('@lydell/node-pty');
 
 // --- CONFIGURATION ---
 const PORT = 4444;
