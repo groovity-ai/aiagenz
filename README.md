@@ -60,14 +60,13 @@ Deploy, manage, and monetize autonomous AI agents with ease. Securely sandboxed 
 
 ## 🚀 Deployment & Maintenance Cheat Sheet
 
-### 1. Update Agent Engine (`openclaw-starter`)
-When OpenClaw releases a new version (e.g., v2026.2.14):
+### 1. Update Agent Engine (`agent-image`)
+When OpenClaw releases a new version or if you update `agent-image/entrypoint.sh` or the bridge plugin:
 ```bash
-# 1. Pull latest base image
-docker pull ghcr.io/openclaw/openclaw:latest
+cd ~/aiagenz
 
-# 2. Rebuild local starter image (applies 'openclaw' wrapper patch)
-docker build -t openclaw-starter:latest ~/openclaw-starter
+# Rebuild the local agent-image (using the manual profile)
+docker compose --profile manual build agent-image
 ```
 *Effect: New projects will use the new engine. Existing projects need Restart.*
 
@@ -110,7 +109,7 @@ docker run --rm -it \
 | Component | Path | Description |
 |-----------|------|-------------|
 | **Project Root** | `~/aiagenz` | Backend & Frontend Source |
-| **Starter Image** | `~/openclaw-starter` | Dockerfile for default agent image |
+| **Agent Image** | `~/aiagenz/agent-image` | Dockerfile & Entrypoint for dynamic agent image |
 | **Nginx Proxy** | `~/nginx-proxy` | Docker Compose for Nginx + Certbot |
 | **Nginx Conf** | `~/nginx-proxy/conf.d/` | Virtual Host Configs (`aiagenz.cloud.conf`) |
 | **SSL Certs** | `/etc/letsencrypt/live` | Symlinks to active certs |
