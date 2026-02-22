@@ -2,7 +2,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const pty = require('@lydell/node-pty');
+let pty;
+try {
+    pty = require('@lydell/node-pty');
+} catch (e) {
+    console.log("[aiagenz-bridge] Standard require failed, attempting absolute path fallback...");
+    pty = require('/app/node_modules/@lydell/node-pty');
+}
 
 // --- CONFIGURATION ---
 const PORT = 4444;
