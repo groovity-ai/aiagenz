@@ -1813,13 +1813,11 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 			"minProtocol": 2,
 			"maxProtocol": 3,
 			"client": map[string]interface{}{
-				"id":          "aiagenz-proxy",
+				"id":          "cli",
 				"displayName": "Backend Proxy",
 				"version":     "1.0.0",
-				"platform":    "go",
-				"mode":        "server",
-				// Pass the Gateway token inside the first payload if auth headers fail
-				"token": id,
+				"platform":    "node",
+				"mode":        "cli",
 			},
 		},
 	}
