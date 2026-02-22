@@ -1139,6 +1139,23 @@ func (s *ProjectService) RunOpenClawCommand(ctx context.Context, id, userID stri
 	}
 
 	// 2. Fallback: Docker Exec
+	// CRITICAL FIX: To prevent "Process Storm" (OOM/Zombie nodes) during container boot,
+	// we NEVER fallback to native CLI execution for frequent polling commands if the Bridge is dead.
+	// Spawning `node /app/openclaw.mjs` takes 100MB+ RAM per execution.
+	pollCmds := map[string]bool{
+		"doctor":   true,
+		"health":   true,
+		"memory":   true,
+		"sessions": true,
+		"channels": true,
+		"skills":   true,
+		"status":   true,
+	}
+	if len(args) > 0 && pollCmds[args[0]] {
+		log.Printf("[INFO] Bridge unavailable for command '%s'. Skipping native CLI fallback to prevent bootloop.", args[0])
+		return nil, domain.ErrInternal("agent is starting up, bridge not ready", err)
+	}
+
 	fullCmd := append([]string{"openclaw"}, args...)
 	output, err := s.container.ExecCommand(ctx, *project.ContainerID, fullCmd)
 	// If error occurred but we have output, try to parse it (some CLI commands return exit 1 but print JSON report)
