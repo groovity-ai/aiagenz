@@ -26,10 +26,10 @@ RUN ARCH=$(uname -m) && \
 
 
 # Copy AiAgenz Bridge Plugin (baked into image for fast startup)
-COPY extensions/aiagenz-bridge /app/builtin-extensions/aiagenz-bridge
+COPY agent-image/extensions/aiagenz-bridge /app/builtin-extensions/aiagenz-bridge
 
 # Copy our custom entrypoint
-COPY entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY agent-image/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Environment
