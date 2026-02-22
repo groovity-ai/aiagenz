@@ -1571,13 +1571,11 @@ func (s *ProjectService) postStartSetup(ctx context.Context, containerID, contai
 		}
 	}
 
-	// 3.5 Configure trusted-proxy auth for WebSocket
-	// We use trusted-proxy auth to bypass OpenClaw's strict cryptographic device pairing requirements
-	// while still granting operator.write scope to the Go Backend WebSocket proxy.
-	// OpenClaw's hot-reload will automatically restart the Gateway to apply these.
-	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.trustedProxies", `["0.0.0.0/0"]`})
-	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.auth.mode", "trusted-proxy"})
-	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.auth.trustedProxy.userHeader", "x-openclaw-user"})
+	// 3.5 Break-Glass Disable Device Identity Check
+	// The OpenClaw Gateway usually requires an ECC Public Key pair and device signature
+	// to grant operator.write access. Since the Go Proxy only forwards JSON and doesn't encrypt,
+	// we use the 'dangerouslyDisableDeviceAuth' hack to natively bypass device signature checks.
+	// This only works because we are falling back to 'password' mode via environment variables.
 	_ = s.container.ExecAsRoot(ctx, containerID, []string{"openclaw", "config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"})
 
 	// 4. Wait for Bridge readiness (polls /status, max 90s for slow startups)
@@ -1798,8 +1796,6 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	// WebSocket server will treat it as a cross-origin browser request and reject
 	// it with '1008 Policy Violation'. Omitting it treats this as a server-to-server call.
 	requestHeader.Add("Authorization", "Bearer "+id)
-	requestHeader.Add("X-OpenClaw-Token", id)
-	requestHeader.Add("x-openclaw-user", id)            // Primary identity for trusted-proxy mode
 	requestHeader.Add("User-Agent", "OpenClaw CLI/1.0") // Bypass Go-http-client blocks
 	requestHeader.Add("Sec-WebSocket-Protocol", "openclaw, "+id)
 
@@ -1830,6 +1826,9 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 			},
 			"role":   "operator",
 			"scopes": []string{"operator.read", "operator.write"},
+			"auth": map[string]string{
+				"token": id,
+			},
 		},
 	}
 	if err := agentConn.WriteJSON(connectReq); err != nil {
