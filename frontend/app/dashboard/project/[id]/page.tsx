@@ -124,56 +124,58 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
                 open={isChatOpen}
                 onClose={() => setIsChatOpen(false)}
             />
-            <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background px-6">
-                <Link href="/dashboard">
-                    <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
-                </Link>
-                <h1 className="text-lg font-semibold">{project.name}</h1>
-                <Badge variant={project.status === "running" ? "default" : isProvisioning ? "secondary" : "destructive"} className={`ml-2 ${isProvisioning ? 'animate-pulse bg-yellow-500/20 text-yellow-600 border-yellow-300' : ''}`}>
-                    {project.status?.toUpperCase()}
-                </Badge>
-                <div className="ml-auto flex items-center gap-2">
+            <header className="sticky top-0 z-30 flex flex-col sm:flex-row sm:h-14 sm:items-center gap-3 sm:gap-4 border-b bg-background px-4 sm:px-6 py-3 sm:py-0">
+                <div className="flex items-center gap-2 sm:gap-4">
+                    <Link href="/dashboard" className="shrink-0">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9"><ArrowLeft className="h-4 w-4" /></Button>
+                    </Link>
+                    <h1 className="text-base sm:text-lg font-semibold line-clamp-1">{project.name}</h1>
+                    <Badge variant={project.status === "running" ? "default" : isProvisioning ? "secondary" : "destructive"} className={`ml-1 sm:ml-2 text-[10px] sm:text-xs shrink-0 ${isProvisioning ? 'animate-pulse bg-yellow-500/20 text-yellow-600 border-yellow-300' : ''}`}>
+                        {project.status?.toUpperCase()}
+                    </Badge>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 sm:ml-auto no-scrollbar w-full sm:w-auto">
                     {project.status === 'running' && (
                         <Button
-                            size="sm" variant="secondary" className="gap-1.5"
+                            size="sm" variant="secondary" className="gap-1.5 shrink-0 h-8 sm:h-9"
                             onClick={() => setIsChatOpen(true)}
                         >
-                            <MessageCircle className="h-4 w-4" />
-                            <span className="hidden sm:inline">Direct Chat</span>
+                            <MessageCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                            <span className="inline">Direct Chat</span>
                         </Button>
                     )}
                     <Button
-                        size="sm" variant="outline" className="gap-2 text-red-500 hover:text-red-600"
+                        size="sm" variant="outline" className="gap-2 text-red-500 hover:text-red-600 shrink-0 h-8 sm:h-9"
                         onClick={() => handleControl('stop')} disabled={loading || project.status !== 'running' || isProvisioning}
                     >
-                        <Square className="h-4 w-4" /> Stop
+                        <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Stop
                     </Button>
                     <Button
-                        size="sm" variant="outline" className="gap-2"
+                        size="sm" variant="outline" className="gap-2 shrink-0 h-8 sm:h-9"
                         onClick={() => handleControl(project.status === 'running' ? 'restart' : 'start')} disabled={loading || isProvisioning}
                     >
-                        {project.status === 'running' ? <RotateCw className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                        {project.status === 'running' ? <RotateCw className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <Play className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
                         {project.status === 'running' ? "Restart" : "Start"}
                     </Button>
-                    <Button variant="destructive" size="icon" onClick={handleDelete} disabled={loading}>
+                    <Button variant="destructive" size="icon" className="shrink-0 h-8 w-8 sm:h-9 sm:w-9" onClick={handleDelete} disabled={loading}>
                         <Trash2 className="h-4 w-4" />
                     </Button>
                 </div>
             </header>
 
-            <main className="flex-1 p-6 space-y-6">
-                <Tabs defaultValue="overview" className="h-full flex flex-col space-y-6">
-                    <div className="flex items-center justify-between overflow-x-auto">
-                        <TabsList>
-                            <TabsTrigger value="overview" className="gap-2"><Activity className="h-4 w-4" /> Overview</TabsTrigger>
-                            <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4" /> Config</TabsTrigger>
-                            <TabsTrigger value="skills" className="gap-2"><Box className="h-4 w-4" /> Skills</TabsTrigger>
-                            <TabsTrigger value="automation" className="gap-2"><Clock className="h-4 w-4" /> Automation</TabsTrigger>
-                            <TabsTrigger value="advanced" className="gap-2"><FileJson className="h-4 w-4" /> Advanced</TabsTrigger>
-                            <TabsTrigger value="sessions" className="gap-2"><Database className="h-4 w-4" /> Sessions</TabsTrigger>
-                            <TabsTrigger value="usage" className="gap-2"><Zap className="h-4 w-4" /> Usage</TabsTrigger>
-                            <TabsTrigger value="console" className="gap-2"><Terminal className="h-4 w-4" /> Console</TabsTrigger>
-                            <TabsTrigger value="webterm" className="gap-2"><Terminal className="h-4 w-4" /> WebTerm</TabsTrigger>
+            <main className="flex-1 p-4 sm:p-6 space-y-4 sm:space-y-6 w-full max-w-[100vw] overflow-hidden">
+                <Tabs defaultValue="overview" className="h-full flex flex-col space-y-4 sm:space-y-6 w-full">
+                    <div className="w-full overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 no-scrollbar pb-1">
+                        <TabsList className="min-w-max flex h-9 sm:h-10">
+                            <TabsTrigger value="overview" className="gap-2 text-xs sm:text-sm"><Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Overview</TabsTrigger>
+                            <TabsTrigger value="config" className="gap-2 text-xs sm:text-sm"><Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Config</TabsTrigger>
+                            <TabsTrigger value="skills" className="gap-2 text-xs sm:text-sm"><Box className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Skills</TabsTrigger>
+                            <TabsTrigger value="automation" className="gap-2 text-xs sm:text-sm"><Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Automation</TabsTrigger>
+                            <TabsTrigger value="advanced" className="gap-2 text-xs sm:text-sm"><FileJson className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Advanced</TabsTrigger>
+                            <TabsTrigger value="sessions" className="gap-2 text-xs sm:text-sm"><Database className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Sessions</TabsTrigger>
+                            <TabsTrigger value="usage" className="gap-2 text-xs sm:text-sm"><Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Usage</TabsTrigger>
+                            <TabsTrigger value="console" className="gap-2 text-xs sm:text-sm"><Terminal className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Console</TabsTrigger>
+                            <TabsTrigger value="webterm" className="gap-2 text-xs sm:text-sm"><Terminal className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> WebTerm</TabsTrigger>
                         </TabsList>
                     </div>
 

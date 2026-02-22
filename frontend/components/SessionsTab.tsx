@@ -124,14 +124,14 @@ export function SessionsTab({ projectId }: SessionsTabProps) {
                             No active sessions found.
                         </div>
                     ) : (
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                             {sessions.map((s) => (
                                 <Card key={s.id} className="overflow-hidden">
                                     <div className="p-4 flex flex-col h-full">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-2">
-                                                <MessageSquare className="h-4 w-4 text-primary" />
-                                                <span className="font-mono text-sm font-semibold truncate max-w-[150px]" title={s.id}>{s.id}</span>
+                                                <MessageSquare className="h-4 w-4 text-primary shrink-0" />
+                                                <span className="font-mono text-sm font-semibold truncate max-w-[130px] sm:max-w-[150px]" title={s.id}>{s.id}</span>
                                             </div>
                                             {s.isArchived && <Badge variant="secondary" className="text-[10px]">Archived</Badge>}
                                         </div>
@@ -174,23 +174,23 @@ export function SessionsTab({ projectId }: SessionsTabProps) {
             </Card>
 
             <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-                <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] flex flex-col p-4 sm:p-6 overflow-hidden">
                     <DialogHeader>
-                        <DialogTitle>Session History</DialogTitle>
-                        <DialogDescription className="font-mono text-xs">{activeSessionId}</DialogDescription>
+                        <DialogTitle className="text-base sm:text-lg">Session History</DialogTitle>
+                        <DialogDescription className="font-mono text-[10px] sm:text-xs truncate">{activeSessionId}</DialogDescription>
                     </DialogHeader>
 
-                    <ScrollArea className="flex-1 mt-4 border rounded-md p-4 bg-muted/20">
+                    <ScrollArea className="flex-1 mt-4 border rounded-md p-3 sm:p-4 bg-muted/20 w-full overflow-x-auto">
                         {loadingHistory ? (
-                            <div className="flex justify-center items-center h-32 text-muted-foreground">Loading history...</div>
+                            <div className="flex justify-center items-center h-32 text-xs sm:text-sm text-muted-foreground">Loading history...</div>
                         ) : historyData.length === 0 ? (
-                            <div className="flex justify-center items-center h-32 text-muted-foreground border-dashed border rounded">No history found for this session.</div>
+                            <div className="flex justify-center items-center h-32 text-xs sm:text-sm text-muted-foreground border-dashed border rounded">No history found for this session.</div>
                         ) : (
                             <div className="space-y-4">
                                 {historyData.map((msg, idx) => (
                                     <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                        <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider px-1">{msg.role}</div>
-                                        <div className={`px-3 py-2 rounded-lg max-w-[85%] text-sm whitespace-pre-wrap ${msg.role === 'user'
+                                        <div className="text-[9px] sm:text-[10px] text-muted-foreground mb-1 uppercase tracking-wider px-1">{msg.role}</div>
+                                        <div className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg max-w-[90%] sm:max-w-[85%] text-xs sm:text-sm whitespace-pre-wrap break-words ${msg.role === 'user'
                                             ? 'bg-primary text-primary-foreground rounded-tr-none'
                                             : msg.role === 'system'
                                                 ? 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/20'

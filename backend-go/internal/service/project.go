@@ -1813,7 +1813,7 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 			"minProtocol": 3,
 			"maxProtocol": 3,
 			"client": map[string]interface{}{
-				"id":          "cli",
+				"id":          "openclaw",
 				"displayName": "Backend Proxy",
 				"version":     "1.0.0",
 				"platform":    "node",

@@ -127,15 +127,15 @@ function QuickStatCard({ icon: Icon, label, value, color }: {
     icon: any; label: string; value: number | string; color: string
 }) {
     return (
-        <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${color}`}>
-                        <Icon className="h-4 w-4" />
+        <Card className="overflow-hidden">
+            <CardContent className="p-3 sm:pt-4 sm:pb-3 sm:px-4 flex items-center justify-center sm:justify-start">
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-2 sm:gap-3 text-center sm:text-left">
+                    <div className={`p-2 rounded-lg ${color} shrink-0`}>
+                        <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
                     </div>
-                    <div>
-                        <div className="text-xl font-bold tabular-nums">{value}</div>
-                        <div className="text-[11px] text-muted-foreground">{label}</div>
+                    <div className="min-w-0">
+                        <div className="text-lg sm:text-xl font-bold tabular-nums truncate">{value}</div>
+                        <div className="text-[10px] sm:text-[11px] text-muted-foreground truncate">{label}</div>
                     </div>
                 </div>
             </CardContent>
@@ -315,42 +315,42 @@ export function OverviewTab({ projectId, project, logs }: OverviewTabProps) {
     return (
         <div className="space-y-4">
             {/* Row 1: Status + Refresh */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
                 <div className="flex items-center gap-3">
                     <StatusDot status={project?.status || "stopped"} />
-                    <div>
+                    <div className="min-w-0">
                         <h2 className="text-lg font-semibold flex items-center gap-2">
-                            {project?.name}
-                            <Badge variant={isRunning ? "default" : "destructive"} className="text-[10px] uppercase">
+                            <span className="truncate">{project?.name}</span>
+                            <Badge variant={isRunning ? "default" : "destructive"} className="text-[9px] sm:text-[10px] uppercase shrink-0">
                                 {project?.status || "unknown"}
                             </Badge>
                         </h2>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
-                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> Uptime: {formatUptime(project?.uptime || project?.startedAt)}</span>
-                            <span>•</span>
-                            <span>{project?.type || "openclaw"}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-3 text-[10px] sm:text-xs text-muted-foreground mt-0.5">
+                            <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="h-3 w-3" /> Uptime: {formatUptime(project?.uptime || project?.startedAt)}</span>
+                            <span className="hidden sm:inline">•</span>
+                            <span className="whitespace-nowrap">{project?.type || "openclaw"}</span>
                             {project?.containerId && (
                                 <>
-                                    <span>•</span>
-                                    <span className="font-mono text-[10px]">{project.containerId.substring(0, 12)}</span>
+                                    <span className="hidden sm:inline">•</span>
+                                    <span className="font-mono text-[9px] sm:text-[10px] whitespace-nowrap">{project.containerId.substring(0, 12)}</span>
                                 </>
                             )}
                         </div>
                     </div>
                 </div>
                 <Button
-                    variant="ghost" size="sm"
+                    variant="default" className="w-full sm:w-auto sm:bg-transparent sm:text-foreground sm:hover:bg-accent sm:border sm:border-input h-9 sm:h-8" size="sm"
                     onClick={() => fetchAll(true)}
                     disabled={refreshing}
                 >
-                    <RefreshCw className={`h-4 w-4 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-4 w-4 mr-1 sm:mr-2 ${refreshing ? 'animate-spin' : ''}`} />
                     Refresh
                 </Button>
             </div>
 
             {/* Row 2: Quick Stats */}
             {isRunning && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
                     <QuickStatCard icon={Users} label="Sessions" value={loading ? "…" : quickStats.sessions} color="bg-blue-500/10 text-blue-500" />
                     <QuickStatCard icon={Wifi} label="Channels" value={loading ? "…" : quickStats.channels} color="bg-purple-500/10 text-purple-500" />
                     <QuickStatCard icon={Zap} label="Skills" value={loading ? "…" : quickStats.skills} color="bg-amber-500/10 text-amber-500" />

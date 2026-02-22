@@ -76,7 +76,7 @@ export function UsageTab({ projectId }: UsageTabProps) {
                             No usage statistics accumulated yet. Your agent needs to process requests first.
                         </div>
                     ) : (
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                             {items.map((item, idx) => (
                                 <Card key={idx} className="bg-muted/30">
                                     <div className="p-4 flex flex-col h-full space-y-4">
