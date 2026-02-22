@@ -1331,8 +1331,8 @@ func (s *ProjectService) buildEnvVars(projectID string, projectName string, req 
 	env := []string{
 		"NODE_ENV=production",
 		"OPENCLAW_GATEWAY_PORT=18789",
-		"OPENCLAW_GATEWAY_AUTH_MODE=password",
-		"OPENCLAW_GATEWAY_PASSWORD=" + projectID,
+		"OPENCLAW_GATEWAY_AUTH_MODE=token",
+		"OPENCLAW_GATEWAY_TOKEN=" + projectID,
 		"OPENCLAW_GATEWAY_BIND=auto",
 		// Give each agent a unique name for Bonjour/mDNS discovery (prevents hostname conflicts)
 		"OPENCLAW_GATEWAY_NAME=aiagenz-" + projectID[:8],
