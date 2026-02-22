@@ -43,15 +43,15 @@ export default function AgentChatPanel({
         // Determine WS Protocol (ws:// or wss://)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const host = window.location.host // e.g. "aiagenz.id" or "localhost:3000"
-        
+
         // In local dev, frontend is 3000, backend is 4001 via proxy? 
         // Or we use relative path /api/ and let Nginx handle it.
         // If local dev without nginx: backend is localhost:4001
-        
+
         // For production (and correct Nginx setup), relative path is best, 
         // but WebSocket constructor needs absolute URL.
         const wsUrl = `${protocol}//${host}/api/projects/${projectId}/ws`
-        
+
         console.log(`[WS] Connecting to ${wsUrl}...`)
         const ws = new WebSocket(wsUrl)
 
@@ -74,7 +74,7 @@ export default function AgentChatPanel({
             console.log('[WS] Closed', event.code, event.reason)
             setIsConnected(false)
             wsRef.current = null
-            
+
             // Reconnect if panel is still open
             if (open) {
                 reconnectTimeoutRef.current = setTimeout(connect, 3000)
@@ -104,10 +104,11 @@ export default function AgentChatPanel({
     }, [open, connect])
 
     const handleWsMessage = (data: any) => {
-        // Handle OpenClaw JSON-RPC Messages
-        // 1. Agent Reply (Push)
-        if (data.method === 'message' || data.method === 'agent.message') {
-            const content = data.params?.message || data.params?.text || ''
+        // Handle OpenClaw TypeBox JSON Frames
+
+        // 1. Chat Event (Streamed Reply)
+        if (data.type === 'event' && data.event === 'chat') {
+            const content = data.payload?.message || data.payload?.text || ''
             if (!content) return
 
             setIsTyping(false)
@@ -120,22 +121,22 @@ export default function AgentChatPanel({
                 }
             ])
         }
-        
-        // 2. Typing Indicator
-        if (data.method === 'typing') {
+
+        // 2. Typing/Agent Status Event
+        if (data.type === 'event' && (data.event === 'presence' || data.event === 'agent')) {
+            // Very simplified: just show typing if there's activity
             setIsTyping(true)
-            // Auto-hide typing after 5s just in case
             setTimeout(() => setIsTyping(false), 5000)
         }
 
-        // 3. System/Error
-        if (data.error) {
+        // 3. System/Response Error
+        if (data.type === 'res' && !data.ok && data.error) {
             setMessages(prev => [
                 ...prev,
                 {
                     id: Date.now().toString(),
                     role: 'system',
-                    content: `Error: ${data.error.message || 'Unknown error'}`
+                    content: `Error: ${data.error.message || 'Gateway rejected request'}`
                 }
             ])
             setIsTyping(false)
@@ -147,7 +148,7 @@ export default function AgentChatPanel({
         if (!input.trim() || !isConnected || !wsRef.current) return
 
         const text = input.trim()
-        
+
         // Optimistic UI update
         setMessages(prev => [
             ...prev,
@@ -160,15 +161,16 @@ export default function AgentChatPanel({
         setInput("")
         setIsTyping(true) // Expect reply
 
-        // Send JSON-RPC
+        // Send OpenClaw Protocol Frame (TypeBox schema)
+        const frameId = Date.now().toString()
         const payload = {
-            jsonrpc: "2.0",
-            method: "message.send", // Standard OpenClaw method
+            type: "req",
+            id: frameId,
+            method: "chat.send",
             params: {
-                to: "main", // Target main agent
-                message: text
-            },
-            id: Date.now()
+                message: text,
+                idempotencyKey: frameId // Required for side-effecting methods
+            }
         }
         wsRef.current.send(JSON.stringify(payload))
     }
@@ -226,14 +228,13 @@ export default function AgentChatPanel({
                                 <Bot className="w-4 h-4 text-primary" />
                             </div>
                         )}
-                        
-                        <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
-                            msg.role === 'user' 
-                                ? 'bg-primary text-primary-foreground rounded-tr-sm' 
-                                : msg.role === 'system'
+
+                        <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${msg.role === 'user'
+                            ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                            : msg.role === 'system'
                                 ? 'bg-destructive/10 text-destructive border border-destructive/20 w-full text-center font-mono text-xs py-2'
                                 : 'bg-muted/50 border border-border/50 text-foreground rounded-tl-sm'
-                        }`}>
+                            }`}>
                             <div className="whitespace-pre-wrap break-words leading-relaxed">
                                 {msg.content}
                             </div>
@@ -246,7 +247,7 @@ export default function AgentChatPanel({
                         )}
                     </div>
                 ))}
-                
+
                 {isTyping && (
                     <div className="flex gap-3 justify-start animate-in fade-in duration-300">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
@@ -259,7 +260,7 @@ export default function AgentChatPanel({
                         </div>
                     </div>
                 )}
-                
+
                 <div ref={messagesEndRef} />
             </div>
 
@@ -274,9 +275,9 @@ export default function AgentChatPanel({
                         disabled={!isConnected}
                         autoFocus
                     />
-                    <Button 
-                        type="submit" 
-                        size="icon" 
+                    <Button
+                        type="submit"
+                        size="icon"
                         disabled={!input.trim() || !isConnected}
                         className="absolute right-1 top-1 h-8 w-8 rounded-full transition-all duration-200 hover:scale-105"
                     >
