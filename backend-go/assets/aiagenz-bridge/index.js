@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const pty = require('@lydell/node-pty');
 
 // --- CONFIGURATION ---
 const PORT = 4444;
@@ -11,6 +12,9 @@ const STATE_DIR = process.env.OPENCLAW_STATE_DIR || path.join(process.env.HOME |
 let CONFIG_PATH = path.join(STATE_DIR, 'openclaw.json');
 let AUTH_PROFILES_PATH = path.join(STATE_DIR, 'agents/main/agent/auth-profiles.json');
 let WORKSPACE_PATH = STATE_DIR;
+
+// Map to store active OAuth PTY sessions: provider -> { ptyProcess, outputBuffer, lastActivity }
+const activeAuthFlows = {};
 
 // --- PLUGIN STATE ---
 const state = {
@@ -264,7 +268,6 @@ const handlers = {
             if (!provider) return res.status(400).json({ ok: false, error: 'provider required' });
 
             // OAuth providers require their auth plugin to be enabled first.
-            // Map provider name -> plugin name (only for OAuth-based providers).
             const OAUTH_PLUGIN_MAP = {
                 'google-antigravity': 'google-antigravity-auth',
                 'google-gemini-cli': 'google-gemini-cli-auth',
@@ -273,32 +276,112 @@ const handlers = {
             };
 
             const pluginName = OAUTH_PLUGIN_MAP[provider];
-            const runLogin = () => {
-                execFile('openclaw', ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
-                    { env: process.env, timeout: 15000 },
-                    (error, stdout, stderr) => {
-                        if (error) {
-                            res.status(500).json({ ok: false, error: error.message, stdout, stderr });
-                        } else {
-                            res.json({ ok: true, data: stdout.trim() });
-                        }
+
+            const runLoginPty = () => {
+                // Kill any existing flow for this provider
+                if (activeAuthFlows[provider]) {
+                    try { activeAuthFlows[provider].ptyProcess.kill(); } catch (e) { }
+                    delete activeAuthFlows[provider];
+                }
+
+                // Spawn openclaw using node-pty to emulate a real terminal
+                const ptyProcess = pty.spawn('openclaw',
+                    ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
+                    {
+                        name: 'xterm-color',
+                        cols: 120,
+                        rows: 30,
+                        cwd: process.cwd(),
+                        env: process.env
                     }
                 );
+
+                activeAuthFlows[provider] = {
+                    ptyProcess,
+                    outputBuffer: '',
+                    lastActivity: Date.now()
+                };
+
+                let urlFound = false;
+                let errorFound = false;
+
+                const onData = (data) => {
+                    const flow = activeAuthFlows[provider];
+                    if (!flow) return;
+
+                    flow.outputBuffer += data;
+                    flow.lastActivity = Date.now();
+
+                    // console.log(`[bridge-pty] ${data}`); // Debugging
+
+                    // Look for the auth URL
+                    if (!urlFound && flow.outputBuffer.includes('Auth URL:')) {
+                        urlFound = true;
+
+                        // Extract URL
+                        // Example output: "Auth URL: https://accounts.google.com/o/oauth..."
+                        const match = flow.outputBuffer.match(/Auth URL:\s*(https?:\/\/[^\s]+)/);
+                        const url = match ? match[1] : flow.outputBuffer;
+
+                        // Wait a tiny bit to ensure the prompt for the callback is ready
+                        setTimeout(() => {
+                            if (!res.headersSent) {
+                                res.json({ ok: true, data: url });
+                            }
+                        }, 500);
+                    }
+
+                    // Look for prompt indicating it's ready for the redirect URL
+                    if (!urlFound && flow.outputBuffer.includes('Paste the redirect URL')) {
+                        // Usually accompanied by "Copy this URL:" before it.
+                        // Fallback if "Auth URL:" wasn't strictly found but the prompt is there.
+                        const match = flow.outputBuffer.match(/Copy this URL:\r?\n(https?:\/\/[^\s]+)/);
+                        if (match && !res.headersSent) {
+                            urlFound = true;
+                            res.json({ ok: true, data: match[1] });
+                        }
+                    }
+
+                    // If it exits immediately or shows an error
+                    if (flow.outputBuffer.includes('Error:') && !res.headersSent) {
+                        errorFound = true;
+                        res.status(500).json({ ok: false, error: flow.outputBuffer });
+                        try { ptyProcess.kill(); } catch (e) { }
+                        delete activeAuthFlows[provider];
+                    }
+                };
+
+                ptyProcess.onData(onData);
+
+                ptyProcess.onExit(({ exitCode }) => {
+                    console.log(`[bridge] PTY process for ${provider} exited with code ${exitCode}`);
+                    delete activeAuthFlows[provider];
+                    if (!urlFound && !errorFound && !res.headersSent) {
+                        res.status(500).json({ ok: false, error: 'Process exited before outputting URL' });
+                    }
+                });
+
+                // Fail-safe timeout for Step 1
+                setTimeout(() => {
+                    if (!urlFound && !res.headersSent) {
+                        res.status(500).json({ ok: false, error: 'Timeout waiting for OAuth URL' });
+                        try { ptyProcess.kill(); } catch (e) { }
+                        delete activeAuthFlows[provider];
+                    }
+                }, 10000);
             };
 
             if (pluginName) {
-                // Auto-enable the auth plugin before starting login
                 console.log(`[bridge] Auto-enabling plugin: ${pluginName}`);
                 execFile('openclaw', ['plugins', 'enable', pluginName],
                     { env: process.env, timeout: 10000 },
                     (err, out, serr) => {
                         if (err) console.log(`[bridge] Plugin enable warning: ${err.message}`);
-                        else console.log(`[bridge] Plugin ${pluginName} enabled: ${out.trim()}`);
-                        runLogin();
+                        runLoginPty();
                     }
                 );
             } else {
-                runLogin();
+                runLoginPty();
             }
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -310,25 +393,57 @@ const handlers = {
             const { provider, callbackUrl } = JSON.parse(body);
             if (!provider || !callbackUrl) return res.status(400).json({ ok: false, error: 'provider and callbackUrl required' });
 
-            const child = require('child_process').spawn('openclaw',
-                ['models', 'auth', 'login', '--provider', provider, '--set-default', '--no-browser'],
-                { env: process.env, timeout: 15000 }
-            );
+            const flow = activeAuthFlows[provider];
+            if (!flow) {
+                return res.status(400).json({ ok: false, error: 'No active OAuth flow found for this provider. Please start over.' });
+            }
 
-            let stdout = '', stderr = '';
-            child.stdout.on('data', d => stdout += d);
-            child.stderr.on('data', d => stderr += d);
+            // Write the callback URL and a carriage return to the PTY stdin
+            flow.ptyProcess.write(callbackUrl + '\r');
+            flow.outputBuffer = ''; // Reset buffer to capture step 2 output
 
-            // Wait briefly for the prompt, then send callback URL
-            setTimeout(() => { child.stdin.write(callbackUrl + '\n'); }, 2000);
+            let successResponded = false;
 
-            child.on('close', (code) => {
-                if (code !== 0) {
-                    res.status(500).json({ ok: false, error: `exit code ${code}`, stdout, stderr });
-                } else {
-                    res.json({ ok: true, data: stdout.trim() });
+            const onDataStep2 = (data) => {
+                flow.outputBuffer += data;
+
+                // Example success output: "Auth profile: google-antigravity:manual" or "Antigravity OAuth complete"
+                if (!successResponded && (flow.outputBuffer.includes('Auth profile:') || flow.outputBuffer.includes('complete'))) {
+                    successResponded = true;
+                    // Wait briefly for write to complete
+                    setTimeout(() => {
+                        if (!res.headersSent) {
+                            res.json({ ok: true, data: flow.outputBuffer });
+                        }
+                    }, 1000);
                 }
-            });
+
+                if (!successResponded && (flow.outputBuffer.includes('Error') || flow.outputBuffer.includes('mismatch') || flow.outputBuffer.includes('failed'))) {
+                    successResponded = true;
+                    if (!res.headersSent) {
+                        res.status(500).json({ ok: false, error: flow.outputBuffer });
+                    }
+                    try { flow.ptyProcess.kill(); } catch (e) { }
+                    delete activeAuthFlows[provider];
+                }
+            };
+
+            // Switch the data listener to step 2 logic
+            flow.ptyProcess.removeAllListeners('data');
+            // node-pty onData returns a disposable, we just hook a new listener
+            flow.ptyProcess.onData(onDataStep2);
+
+            // Fail-safe timeout for Step 2
+            setTimeout(() => {
+                if (!successResponded && !res.headersSent) {
+                    res.status(500).json({ ok: false, error: 'Timeout waiting for OAuth to complete. Output: ' + flow.outputBuffer });
+                    try { flow.ptyProcess.kill(); } catch (e) { }
+                    delete activeAuthFlows[provider];
+                }
+            }, 20000);
+
+            // Inherit the exit handler from step 1
+
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
