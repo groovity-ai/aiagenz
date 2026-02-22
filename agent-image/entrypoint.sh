@@ -176,20 +176,41 @@ chmod +x /usr/local/bin/openclaw
 
 echo "🚀 Starting Web Terminal (ttyd)..."
 ttyd --version || echo "⚠️  ttyd binary missing or failed"
-nohup su node -c "cd /home/node/workspace && ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
+su node -c "cd /home/node/workspace && ttyd -p 7681 -W bash" > /tmp/ttyd.log 2>&1 &
+TTYD_PID=$!
 sleep 1
 cat /tmp/ttyd.log
 
 # Use project-specific name for Bonjour/mDNS discovery (prevents hostname conflicts)
 AGENT_NAME="${OPENCLAW_GATEWAY_NAME:-openclaw}"
 
+# --- Graceful Shutdown Handler ---
+# Prevent zombie processes (like ttyd) when Docker restarts the container.
+cleanup() {
+    echo "🛑 Received termination signal. Cleaning up..."
+    if [ ! -z "$TTYD_PID" ]; then
+        kill -TERM "$TTYD_PID" 2>/dev/null
+    fi
+    if [ ! -z "$OPENCLAW_PID" ]; then
+        kill -TERM "$OPENCLAW_PID" 2>/dev/null
+    fi
+    wait
+    echo "👋 Container stopped."
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
 echo "🚀 Starting OpenClaw Gateway..."
-# Run as node user using a safer shell execution pattern to avoid token expansion bugs
+# Reverting to direct su execution without `exec`. If token has spaces, we escape it natively.
 su node -s /bin/bash -c "
   export NODE_OPTIONS='${NODE_OPTIONS}'
-  exec node /app/openclaw.mjs gateway \
+  node /app/openclaw.mjs gateway \
     --port 18789 \
     --bind lan \
     --token '${OPENCLAW_GATEWAY_TOKEN}' \
     --allow-unconfigured
-"
+" &
+OPENCLAW_PID=$!
+
+# Wait for background processes so the trap can catch signals
+wait -n
