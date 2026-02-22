@@ -1791,10 +1791,10 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	// Recent OpenClaw versions also strictly validate the token during HTTP Upgrade.
 	agentURL := url.URL{Scheme: "ws", Host: targetHost, Path: "/", RawQuery: "token=" + id}
 	requestHeader := http.Header{}
-	// CRITICAL: DO NOT SEND 'Origin' HEADER!
-	// If 'Origin' is set (e.g. to the 172.x.x.x container IP), the OpenClaw Node.js
-	// WebSocket server will treat it as a cross-origin browser request and reject
-	// it with '1008 Policy Violation'. Omitting it treats this as a server-to-server call.
+	// CRITICAL: Since we spoofed the client.id as 'openclaw-control-ui', OpenClaw now strictly
+	// enforces `checkBrowserOrigin`. We MUST send an Origin header, and its host MUST
+	// perfectly match the target Host header. Setting it to http://targetHost bypasses this.
+	requestHeader.Add("Origin", "http://"+targetHost)
 	requestHeader.Add("Authorization", "Bearer "+id)
 	requestHeader.Add("User-Agent", "OpenClaw CLI/1.0") // Bypass Go-http-client blocks
 	requestHeader.Add("Sec-WebSocket-Protocol", "openclaw, "+id)
