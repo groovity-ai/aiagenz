@@ -2,7 +2,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const pty = require('@lydell/node-pty');
+let pty;
+try {
+    pty = require('@lydell/node-pty');
+} catch (e) {
+    // Fallback for Docker container where OpenClaw dependencies are at /app/node_modules
+    pty = require('/app/node_modules/@lydell/node-pty');
+}
 
 // --- CONFIGURATION ---
 const PORT = 4444;
@@ -447,6 +453,41 @@ const handlers = {
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
+    },
+
+    'GET:/sessions': (req, res) => {
+        execFile('openclaw', ['sessions', 'list', '--json'], { env: process.env, timeout: 15000 }, (error, stdout, stderr) => {
+            if (error && error.code !== 1) { // OpenClaw might exit with 1 if there's a warning but valid JSON
+                return res.status(500).json({ ok: false, error: error.message, stderr });
+            }
+            try {
+                res.json({ ok: true, data: JSON.parse(stdout) });
+            } catch (e) {
+                res.status(500).json({ ok: false, error: "Failed to parse session list JSON", stdout });
+            }
+        });
+    },
+
+    'GET:/sessions/:id/history': (req, res, body, id) => {
+        execFile('openclaw', ['sessions', 'history', id, '--json'], { env: process.env, timeout: 15000 }, (error, stdout, stderr) => {
+            if (error && error.code !== 1) {
+                return res.status(500).json({ ok: false, error: error.message, stderr });
+            }
+            try {
+                res.json({ ok: true, data: JSON.parse(stdout) });
+            } catch (e) {
+                res.status(500).json({ ok: false, error: "Failed to parse session history JSON", stdout });
+            }
+        });
+    },
+
+    'DELETE:/sessions/:id': (req, res, body, id) => {
+        execFile('openclaw', ['sessions', 'remove', id], { env: process.env, timeout: 15000 }, (error, stdout, stderr) => {
+            if (error) {
+                return res.status(500).json({ ok: false, error: error.message, stderr });
+            }
+            res.json({ ok: true, message: `Session ${id} deleted` });
+        });
     }
 };
 
@@ -469,6 +510,12 @@ const server = http.createServer((req, res) => {
         const key = `${req.method}:${urlPath}`;
         if (handlers[key]) {
             handlers[key](req, res, body);
+        } else if (req.method === 'GET' && urlPath.startsWith('/sessions/') && urlPath.endsWith('/history')) {
+            const id = urlPath.split('/')[2];
+            handlers['GET:/sessions/:id/history'](req, res, body, id);
+        } else if (req.method === 'DELETE' && urlPath.startsWith('/sessions/')) {
+            const id = urlPath.split('/')[2];
+            handlers['DELETE:/sessions/:id'](req, res, body, id);
         } else {
             res.status(404).json({ ok: false, error: "Not Found" });
         }
