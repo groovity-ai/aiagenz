@@ -1790,7 +1790,8 @@ func (s *ProjectService) ProxyGatewayWS(ctx context.Context, id, userID string, 
 	// it with '1008 Policy Violation'. Omitting it treats this as a server-to-server call.
 	requestHeader.Add("Authorization", "Bearer "+id)
 	requestHeader.Add("X-OpenClaw-Token", id)
-	requestHeader.Add("X-Forwarded-User", "admin") // Fallback for trusted-proxy mode
+	requestHeader.Add("X-Forwarded-User", "admin")      // Fallback for trusted-proxy mode
+	requestHeader.Add("User-Agent", "OpenClaw CLI/1.0") // Bypass Go-http-client blocks
 
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL.String(), requestHeader)
 	if err != nil {
