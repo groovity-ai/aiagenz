@@ -140,8 +140,7 @@ const handlers = {
                 const sanitized = {};
                 for (const [k, v] of Object.entries(profiles)) {
                     if (v && typeof v === 'object') {
-                        let mode = v.mode || v.type || 'token';
-                        if (mode === 'api_key') mode = 'token'; // openclaw.json expects 'token', not 'api_key'
+                        let mode = v.mode || v.type || 'api_key'; // Default to api_key for LLM providers
                         sanitized[k] = { provider: v.provider, mode };
                     }
                 }
